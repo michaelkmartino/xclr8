@@ -8,6 +8,7 @@ import { QuotesModule } from './quotes/quotes.module.js';
 import { LineItemsModule } from './line-items/line-items.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { PrintSelectionsModule } from './print-selections/print-selections.module.js';
+import { AdminModule } from './admin/admin.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { PrintSelectionsModule } from './print-selections/print-selections.modul
     LineItemsModule,
     CustomersModule,
     PrintSelectionsModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
