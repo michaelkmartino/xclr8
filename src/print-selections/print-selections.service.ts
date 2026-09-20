@@ -142,9 +142,12 @@ export class PrintSelectionsService {
         continue;
       }
       if (li.lineType === 'subtotal') {
+        // noteText doubles as the subtotal's freeform title — defaults to
+        // "Subtotal" when the user hasn't renamed it (confirmed 2026-09-19).
         pricedLines.push({
           lineNumber: li.lineNumber,
           lineType: 'subtotal',
+          noteText: li.noteText || 'Subtotal',
           extendedSellPrice: runningSubtotal.toFixed(2),
           isBold: true,
         });

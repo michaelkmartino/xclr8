@@ -566,9 +566,15 @@ async function renderLineItemsTab(version) {
 
   const reload = () => render();
 
+  // Every action below surfaces a failure with alert() instead of letting a
+  // rejected promise vanish silently — previously a failed request (a
+  // stale reference, a validation error) just looked like the button did
+  // nothing (2026-09-19 fix).
   const deleteLine = async (id) => {
-    await api(`/line-items/${id}?editedBy=${encodeURIComponent(getUserName())}`, { method: 'DELETE' });
-    reload();
+    try {
+      await api(`/line-items/${id}?editedBy=${encodeURIComponent(getUserName())}`, { method: 'DELETE' });
+      reload();
+    } catch (e) { alert(`Couldn't delete this line: ${e.message}`); }
   };
   // Inserts a new line directly above the given row, of whichever type is
   // asked for — the per-row "+" menu (any of the 5 types) and the
@@ -576,50 +582,65 @@ async function renderLineItemsTab(version) {
   // this. New rows land with placeholder defaults and are filled out
   // inline in the grid, same as "+ Add ..." below the table (2026-09-19).
   const insertLineAbove = async (id, lineType = 'item') => {
-    const body = { lineType, editedBy: getUserName() };
-    if (lineType === 'item') {
-      Object.assign(body, { quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0' });
-    } else if (lineType === 'note' || lineType === 'description') {
-      Object.assign(body, { noteText: '', internalOnly: false });
-    }
-    await api(`/line-items/${id}/insert-before`, { method: 'POST', body });
-    reload();
+    try {
+      const body = { lineType, editedBy: getUserName() };
+      if (lineType === 'item') {
+        Object.assign(body, { quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0' });
+      } else if (lineType === 'note' || lineType === 'description') {
+        Object.assign(body, { noteText: '', internalOnly: false });
+      }
+      await api(`/line-items/${id}/insert-before`, { method: 'POST', body });
+      reload();
+    } catch (e) { alert(`Couldn't insert a line: ${e.message}`); }
   };
+  // Copy works on Item, Note, and Description lines — an Item's copy also
+  // carries its positional Note/Description children (2026-09-19).
   const copyLine = async (id) => {
-    lineItemClipboard = await api(`/line-items/${id}/with-children`);
-    reload();
+    try {
+      lineItemClipboard = await api(`/line-items/${id}/with-children`);
+      reload();
+    } catch (e) { alert(`Couldn't copy this line: ${e.message}`); }
   };
   const pasteLine = async () => {
     if (!lineItemClipboard) return;
-    const src = lineItemClipboard.lineItem;
-    const newItem = await api(`/versions/${version.id}/line-items`, {
-      method: 'POST',
-      body: {
-        lineType: 'item',
-        quantity: src.quantity,
-        fixtureType: src.fixtureType,
-        manufacturerId: src.manufacturerId,
-        partNumber: src.partNumber || undefined,
-        partDescription: src.partDescription || undefined,
-        dnBase: src.dnBase,
-        editedBy: getUserName(),
-      },
-    });
-    // Notes/descriptions land right after the new item, in the same order —
-    // since a parent is positional (the run of note/description rows right
-    // below an item), this keeps them tied to it (2026-09-19).
-    for (const child of lineItemClipboard.children) {
-      await api(`/versions/${version.id}/line-items`, {
-        method: 'POST',
-        body: {
-          lineType: child.lineType,
-          noteText: child.noteText || undefined,
-          internalOnly: child.internalOnly,
-          editedBy: getUserName(),
-        },
-      });
-    }
-    reload();
+    try {
+      const src = lineItemClipboard.lineItem;
+      if (src.lineType === 'note' || src.lineType === 'description') {
+        await api(`/versions/${version.id}/line-items`, {
+          method: 'POST',
+          body: { lineType: src.lineType, noteText: src.noteText || '', internalOnly: !!src.internalOnly, editedBy: getUserName() },
+        });
+      } else {
+        await api(`/versions/${version.id}/line-items`, {
+          method: 'POST',
+          body: {
+            lineType: 'item',
+            quantity: src.quantity,
+            fixtureType: src.fixtureType,
+            manufacturerId: src.manufacturerId,
+            partNumber: src.partNumber || undefined,
+            partDescription: src.partDescription || undefined,
+            dnBase: src.dnBase,
+            editedBy: getUserName(),
+          },
+        });
+        // Notes/descriptions land right after the new item, in the same
+        // order — since a parent is positional (the run of note/description
+        // rows right below an item), this keeps them tied to it (2026-09-19).
+        for (const child of lineItemClipboard.children) {
+          await api(`/versions/${version.id}/line-items`, {
+            method: 'POST',
+            body: {
+              lineType: child.lineType,
+              noteText: child.noteText || undefined,
+              internalOnly: child.internalOnly,
+              editedBy: getUserName(),
+            },
+          });
+        }
+      }
+      reload();
+    } catch (e) { alert(`Couldn't paste: ${e.message}`); }
   };
 
   if (!sorted.length) {
@@ -693,7 +714,9 @@ async function renderLineItemsTab(version) {
       };
       const actionCells = [el('td', {}, trashBtn), el('td', {}, insertSelect)];
 
-      if (li.lineType === 'item') {
+      // Item, Note, and Description lines are all copyable — Blank and
+      // Subtotal aren't (there's nothing to carry over) (2026-09-19).
+      if (li.lineType === 'item' || li.lineType === 'note' || li.lineType === 'description') {
         const copyBtn = el('button', { class: 'secondary', title: 'Copy this line' }, '⎘');
         copyBtn.onclick = () => copyLine(li.id);
         actionCells.push(el('td', {}, copyBtn));
@@ -714,9 +737,21 @@ async function renderLineItemsTab(version) {
         runningDnExt = 0;
         const row = el('tr', { style: 'font-weight:700;' }, actionCells);
         row.dataset.lineId = li.id;
+        // The title is freeform (reuses noteText, unused by blank/subtotal
+        // rows otherwise) but defaults to "Subtotal" until renamed
+        // (confirmed 2026-09-19).
+        const labelInput = el('input', {
+          value: li.noteText || 'Subtotal',
+          style: 'width:100%; border:none; background:transparent; font-weight:700;',
+        });
+        labelInput.onchange = async () => {
+          try {
+            await api(`/line-items/${li.id}`, { method: 'PATCH', body: { noteText: labelInput.value, editedBy: getUserName() } });
+          } catch (e) { alert(`Couldn't save that change: ${e.message}`); }
+        };
         row.append(
           el('td', {}, ''),
-          el('td', { colspan: String(LINE_ITEM_COLS.length - 2) }, 'Subtotal'),
+          el('td', { colspan: String(LINE_ITEM_COLS.length - 2) }, labelInput),
           el('td', { class: 'num' }, `$${amount.toFixed(2)}`),
         );
         table.appendChild(row);
@@ -733,15 +768,19 @@ async function renderLineItemsTab(version) {
         actionCells.forEach(c => row.appendChild(c));
         const textInput = el('input', { value: li.noteText || '', style: 'width:100%; border:none; background:transparent;' });
         textInput.onchange = async () => {
-          await api(`/line-items/${li.id}`, { method: 'PATCH', body: { noteText: textInput.value, editedBy: getUserName() } });
+          try {
+            await api(`/line-items/${li.id}`, { method: 'PATCH', body: { noteText: textInput.value, editedBy: getUserName() } });
+          } catch (e) { alert(`Couldn't save that change: ${e.message}`); }
         };
         const cellChildren = [textInput];
         if (isNote) {
           const internalCheckbox = el('input', { type: 'checkbox' });
           internalCheckbox.checked = !!li.internalOnly;
           internalCheckbox.onchange = async () => {
-            await api(`/line-items/${li.id}`, { method: 'PATCH', body: { internalOnly: internalCheckbox.checked, editedBy: getUserName() } });
-            reload();
+            try {
+              await api(`/line-items/${li.id}`, { method: 'PATCH', body: { internalOnly: internalCheckbox.checked, editedBy: getUserName() } });
+              reload();
+            } catch (e) { alert(`Couldn't save that change: ${e.message}`); }
           };
           cellChildren.push(el('label', { style: 'flex-direction:row; align-items:center; gap:4px; display:inline-flex; margin-left:10px;' }, [internalCheckbox, 'Internal only']));
         }
@@ -765,7 +804,11 @@ async function renderLineItemsTab(version) {
       const partInput = el('input', { value: li.partNumber || '', style: 'width:100%; border:none; background:transparent;' });
       const dnInput = el('input', { value: li.dnBase, style: 'width:100%; border:none; background:transparent; text-align:right;' });
 
-      const patch = async (fields) => { await api(`/line-items/${li.id}`, { method: 'PATCH', body: { ...fields, editedBy: getUserName() } }); };
+      const patch = async (fields) => {
+        try {
+          await api(`/line-items/${li.id}`, { method: 'PATCH', body: { ...fields, editedBy: getUserName() } });
+        } catch (e) { alert(`Couldn't save that change: ${e.message}`); }
+      };
       qtyInput.onchange = () => { patch({ quantity: qtyInput.value }); dnExtCell.textContent = `$${(Number(qtyInput.value) * Number(dnInput.value)).toFixed(2)}`; };
       fixtureInput.onchange = () => patch({ fixtureType: fixtureInput.value });
       mfrSelect.onchange = () => patch({ manufacturerId: mfrSelect.value }).then(reload);
@@ -814,7 +857,9 @@ async function renderLineItemsTab(version) {
     const addSubtotalBtn = el('button', { class: 'secondary' }, '+ Add subtotal');
     addBar.append(addLineBtn, addNoteBtn, addDescBtn, addBlankBtn, addSubtotalBtn);
     if (lineItemClipboard) {
-      const pasteBtn = el('button', { class: 'secondary' }, `Paste "${lineItemClipboard.lineItem.fixtureType || 'line'}"`);
+      const clip = lineItemClipboard.lineItem;
+      const clipLabel = clip.lineType === 'item' ? (clip.fixtureType || 'line') : (clip.noteText || clip.lineType);
+      const pasteBtn = el('button', { class: 'secondary' }, `Paste "${clipLabel}"`);
       pasteBtn.onclick = pasteLine;
       addBar.appendChild(pasteBtn);
     }
@@ -825,28 +870,44 @@ async function renderLineItemsTab(version) {
     // (confirmed 2026-09-19). Defaults to the first manufacturer in the
     // list; the user can change it right there in the row.
     addLineBtn.onclick = async () => {
-      await api(`/versions/${version.id}/line-items`, {
-        method: 'POST',
-        body: { lineType: 'item', quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0', editedBy: getUserName() },
-      });
-      reload();
+      try {
+        await api(`/versions/${version.id}/line-items`, {
+          method: 'POST',
+          body: { lineType: 'item', quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0', editedBy: getUserName() },
+        });
+        reload();
+      } catch (e) { alert(`Couldn't add a line item: ${e.message}`); }
     };
     addNoteBtn.onclick = async () => {
-      await api(`/versions/${version.id}/line-items`, {
-        method: 'POST',
-        body: { lineType: 'note', noteText: '', internalOnly: false, editedBy: getUserName() },
-      });
-      reload();
+      try {
+        await api(`/versions/${version.id}/line-items`, {
+          method: 'POST',
+          body: { lineType: 'note', noteText: '', internalOnly: false, editedBy: getUserName() },
+        });
+        reload();
+      } catch (e) { alert(`Couldn't add a note: ${e.message}`); }
     };
     addDescBtn.onclick = async () => {
-      await api(`/versions/${version.id}/line-items`, {
-        method: 'POST',
-        body: { lineType: 'description', noteText: '', internalOnly: false, editedBy: getUserName() },
-      });
-      reload();
+      try {
+        await api(`/versions/${version.id}/line-items`, {
+          method: 'POST',
+          body: { lineType: 'description', noteText: '', internalOnly: false, editedBy: getUserName() },
+        });
+        reload();
+      } catch (e) { alert(`Couldn't add a description: ${e.message}`); }
     };
-    addBlankBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } }); reload(); };
-    addSubtotalBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'subtotal', editedBy: getUserName() } }); reload(); };
+    addBlankBtn.onclick = async () => {
+      try {
+        await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } });
+        reload();
+      } catch (e) { alert(`Couldn't add a blank line: ${e.message}`); }
+    };
+    addSubtotalBtn.onclick = async () => {
+      try {
+        await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'subtotal', editedBy: getUserName() } });
+        reload();
+      } catch (e) { alert(`Couldn't add a subtotal: ${e.message}`); }
+    };
   }
   app.appendChild(panel);
 }
@@ -971,7 +1032,7 @@ async function showPrintableQuote(versionId, customerId) {
         return;
       }
       if (li.lineType === 'subtotal') {
-        table.appendChild(el('tr', { style: 'font-weight:700;' }, [el('td', {}, ''), el('td', { colspan: '4' }, 'Subtotal'), el('td', { class: 'num' }, `$${li.extendedSellPrice}`)]));
+        table.appendChild(el('tr', { style: 'font-weight:700;' }, [el('td', {}, ''), el('td', { colspan: '4' }, li.noteText || 'Subtotal'), el('td', { class: 'num' }, `$${li.extendedSellPrice}`)]));
         return;
       }
       table.appendChild(el('tr', {}, [
