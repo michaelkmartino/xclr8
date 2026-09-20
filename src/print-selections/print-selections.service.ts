@@ -116,7 +116,7 @@ export class PrintSelectionsService {
 
     const pricedLines: Array<{
       lineNumber: number;
-      isNote?: boolean;
+      lineType: string;
       noteText?: string | null;
       fixtureType?: string | null;
       partNumber?: string | null;
@@ -125,13 +125,30 @@ export class PrintSelectionsService {
       unitSellPrice?: string;
       extendedSellPrice?: string;
       priceColumnLabel?: string;
+      isBold?: boolean;
     }> = [];
+    let runningSubtotal = 0;
     for (const li of lineItems) {
       // Internal-only notes never appear on a printed/sent quote; other
-      // notes print as a plain text line, unpriced (confirmed 2026-09-19).
-      if (li.isNote) {
+      // notes and descriptions print as a plain text line, unpriced
+      // (confirmed 2026-09-19).
+      if (li.lineType === 'note' || li.lineType === 'description') {
         if (li.internalOnly) continue;
-        pricedLines.push({ lineNumber: li.lineNumber, isNote: true, noteText: li.noteText });
+        pricedLines.push({ lineNumber: li.lineNumber, lineType: li.lineType, noteText: li.noteText });
+        continue;
+      }
+      if (li.lineType === 'blank') {
+        pricedLines.push({ lineNumber: li.lineNumber, lineType: 'blank' });
+        continue;
+      }
+      if (li.lineType === 'subtotal') {
+        pricedLines.push({
+          lineNumber: li.lineNumber,
+          lineType: 'subtotal',
+          extendedSellPrice: runningSubtotal.toFixed(2),
+          isBold: true,
+        });
+        runningSubtotal = 0; // each subtotal covers the item lines since the previous one
         continue;
       }
 
@@ -149,19 +166,24 @@ export class PrintSelectionsService {
       const dn = Number(li.dnBase);
       const sellUnit = dn * Number(column.multiplier);
       const quantity = Number(li.quantity);
+      const extended = sellUnit * quantity;
+      runningSubtotal += extended;
       pricedLines.push({
         lineNumber: li.lineNumber,
+        lineType: 'item',
         fixtureType: li.fixtureType,
         partNumber: li.partNumber,
         partDescription: li.partDescription,
         quantity: li.quantity,
         unitSellPrice: sellUnit.toFixed(2),
-        extendedSellPrice: (sellUnit * quantity).toFixed(2),
+        extendedSellPrice: extended.toFixed(2),
         priceColumnLabel: column.columnLabel,
       });
     }
 
-    const quoteTotal = pricedLines.reduce((sum, l) => sum + Number(l.extendedSellPrice ?? 0), 0);
+    const quoteTotal = pricedLines
+      .filter((l) => l.lineType === 'item')
+      .reduce((sum, l) => sum + Number(l.extendedSellPrice ?? 0), 0);
 
     return {
       quoteVersionId,

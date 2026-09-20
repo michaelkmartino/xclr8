@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq, max } from 'drizzle-orm';
+import { and, asc, desc, eq, max } from 'drizzle-orm';
 import { DB } from '../db/db.module.js';
 import * as schema from '../db/schema.js';
 import { CreateQuoteDto } from './dto/create-quote.dto.js';
@@ -151,7 +151,8 @@ export class QuotesService {
       const sourceLineItems = await tx
         .select()
         .from(schema.lineItems)
-        .where(eq(schema.lineItems.quoteVersionId, sourceVersionId));
+        .where(eq(schema.lineItems.quoteVersionId, sourceVersionId))
+        .orderBy(asc(schema.lineItems.lineNumber)); // items before their note/description children
 
       for (const li of sourceLineItems) {
         const [newLineItem] = await tx
@@ -168,13 +169,14 @@ export class QuotesService {
             dnBase: li.dnBase,
             commissionPct: li.commissionPct,
             overageSplitPct: li.overageSplitPct,
+            lineType: li.lineType,
             isNote: li.isNote,
             noteText: li.noteText,
             internalOnly: li.internalOnly,
           })
           .returning();
 
-        if (li.isNote) continue; // notes have no price columns to copy
+        if (li.lineType !== 'item') continue; // only fixture lines have price columns
 
         const sourceColumns = await tx
           .select()

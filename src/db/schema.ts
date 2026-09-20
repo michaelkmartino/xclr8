@@ -134,12 +134,23 @@ export const lineItems = pgTable('line_items', {
   // user-entered per line item anymore (confirmed 2026-09-19).
   commissionPct: numeric('commission_pct', { precision: 6, scale: 4 }),
   overageSplitPct: numeric('overage_split_pct', { precision: 6, scale: 4 }),
-  // ---- Note row fields (2026-09-19) ----
-  isNote: boolean('is_note').notNull().default(false),
+  // ---- Non-fixture row fields (2026-09-19) ----
+  // lineType: 'item' (a priced fixture line) | 'note' (free text, prints
+  // unless internalOnly) | 'description' (free text, always prints, never
+  // shaded) | 'blank' (an empty spacer line) | 'subtotal' (bold, its amount
+  // is always computed fresh from the item lines above it, never stored).
+  isNote: boolean('is_note').notNull().default(false), // legacy flag, kept in sync with lineType === 'note'
+  lineType: text('line_type').notNull().default('item'),
   noteText: text('note_text'),
   // Internal-only notes never appear on a printed/sent quote.
   internalOnly: boolean('internal_only').notNull().default(false),
 });
+// Note: a note/description line's "parent" fixture line is positional —
+// the contiguous run of note/description rows immediately below an item
+// row, before the next item/blank/subtotal row, in lineNumber order. There
+// is no drag-reorder yet, so an explicit parent-id column would only ever
+// reflect creation order, not position; the grid always inserts new lines
+// at the end anyway (confirmed 2026-09-19).
 
 // ---------------------------------------------------------------------------
 // Quote Version × Manufacturer Commission Structure — an explicit, per-quote

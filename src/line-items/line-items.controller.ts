@@ -1,6 +1,7 @@
-import { Body, Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { LineItemsService } from './line-items.service.js';
 import { CreateLineItemDto } from './dto/create-line-item.dto.js';
+import { UpdateLineItemDto } from './dto/update-line-item.dto.js';
 import { CreatePriceColumnDto } from './dto/create-price-column.dto.js';
 import { SetCommissionStructureDto } from './dto/set-commission-structure.dto.js';
 
@@ -33,6 +34,21 @@ export class LineItemsController {
     const lineItem = await this.lineItemsService.findOneWithPricing(id);
     if (!lineItem) throw new NotFoundException(`Line item ${id} not found`);
     return lineItem;
+  }
+
+  @Get('line-items/:id/with-children')
+  getWithChildren(@Param('id') id: string) {
+    return this.lineItemsService.getWithChildren(id);
+  }
+
+  @Patch('line-items/:id')
+  update(@Param('id') id: string, @Body() dto: UpdateLineItemDto) {
+    return this.lineItemsService.update(id, dto);
+  }
+
+  @Delete('line-items/:id')
+  remove(@Param('id') id: string, @Query('editedBy') editedBy?: string) {
+    return this.lineItemsService.remove(id, editedBy);
   }
 
   @Post('line-items/:id/price-columns')

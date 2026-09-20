@@ -1,29 +1,33 @@
-import { IsBoolean, IsNumberString, IsOptional, IsString, IsUUID, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsNumberString, IsOptional, IsString, IsUUID, ValidateIf } from 'class-validator';
+
+const LINE_TYPES = ['item', 'note', 'description', 'blank', 'subtotal'] as const;
 
 /**
- * Two shapes share this one DTO/endpoint, distinguished by `isNote`
- * (confirmed 2026-09-19):
- *  - a normal fixture line: quantity/fixtureType/manufacturerId/dnBase
- *    required, lineNumber and commission/overage are never client-supplied
- *    (server assigns the line number and auto-populates commission from the
- *    Manufacturer's standard rate or this quote's Commission Structure).
- *  - a Note row (isNote: true): just free-text noteText plus the
- *    internalOnly flag that keeps it off printed/sent quotes.
+ * One endpoint, five row shapes, distinguished by `lineType` (2026-09-19):
+ *  - 'item': a priced fixture line. quantity/fixtureType/manufacturerId/
+ *    dnBase required. lineNumber and commission/overage are never
+ *    client-supplied.
+ *  - 'note' / 'description': free-text noteText, tied to the fixture line
+ *    above via parentLineItemId. Notes respect internalOnly; descriptions
+ *    always print and are never shaded.
+ *  - 'blank': an empty spacer line, no other fields needed.
+ *  - 'subtotal': no fields needed — its amount is always computed fresh
+ *    from the item lines above it, never stored.
  */
 export class CreateLineItemDto {
   @IsOptional()
-  @IsBoolean()
-  isNote?: boolean;
+  @IsIn(LINE_TYPES)
+  lineType?: (typeof LINE_TYPES)[number];
 
-  @ValidateIf((o) => !o.isNote)
+  @ValidateIf((o) => !o.lineType || o.lineType === 'item')
   @IsNumberString()
   quantity?: string;
 
-  @ValidateIf((o) => !o.isNote)
+  @ValidateIf((o) => !o.lineType || o.lineType === 'item')
   @IsString()
   fixtureType?: string;
 
-  @ValidateIf((o) => !o.isNote)
+  @ValidateIf((o) => !o.lineType || o.lineType === 'item')
   @IsUUID()
   manufacturerId?: string;
 
@@ -39,11 +43,11 @@ export class CreateLineItemDto {
   @IsString()
   notes?: string;
 
-  @ValidateIf((o) => !o.isNote)
+  @ValidateIf((o) => !o.lineType || o.lineType === 'item')
   @IsNumberString()
   dnBase?: string;
 
-  @ValidateIf((o) => o.isNote)
+  @ValidateIf((o) => o.lineType === 'note' || o.lineType === 'description')
   @IsString()
   noteText?: string;
 

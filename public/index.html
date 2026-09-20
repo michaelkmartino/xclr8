@@ -526,6 +526,26 @@ async function renderVersion() {
   else await renderLineItemsTab(version);
 }
 
+// Column widths for the Line Items grid persist across every quote the user
+// opens, until they drag a column again (confirmed 2026-09-19) — one global
+// setting in localStorage, not per-quote.
+const LINE_ITEM_COLS = [
+  { key: 'num', label: '#', default: 50 },
+  { key: 'qty', label: 'Qty', default: 60 },
+  { key: 'fixture', label: 'Fixture Type', default: 220 },
+  { key: 'mfr', label: 'Manufacturer', default: 160 },
+  { key: 'part', label: 'Part #', default: 110 },
+  { key: 'dn', label: 'DN', default: 90 },
+  { key: 'dnExt', label: 'DN Extended', default: 110 },
+];
+function loadColWidths() {
+  try { return JSON.parse(localStorage.getItem('xclr8-lineitem-col-widths') || '{}'); } catch { return {}; }
+}
+function saveColWidths(widths) {
+  try { localStorage.setItem('xclr8-lineitem-col-widths', JSON.stringify(widths)); } catch {}
+}
+let lineItemClipboard = null; // { lineItem, children } from the Copy button — session-only, not persisted
+
 async function renderLineItemsTab(version) {
   const [lineItems, mfrs] = await Promise.all([api(`/versions/${version.id}/line-items`), api('/manufacturers')]);
   const panel = el('div', { class: 'panel' });
@@ -534,53 +554,223 @@ async function renderLineItemsTab(version) {
   panel.appendChild(el('div', { class: 'panel-header' }, [el('h2', {}, 'Line items'), commissionBtn]));
 
   const sorted = [...lineItems].sort((a, b) => a.lineNumber - b.lineNumber);
-  if (!sorted.length) panel.appendChild(el('div', { class: 'empty' }, 'No line items yet — add one below.'));
-  else {
-    const table = el('table');
-    table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Qty'), el('th', {}, 'Fixture Type'), el('th', {}, 'Manufacturer'), el('th', {}, 'Part #'), el('th', {}, 'DN Base')]));
+  const mfrById = new Map(mfrs.map(m => [m.id, m]));
+  const widths = loadColWidths();
+
+  const reload = () => render();
+
+  const deleteLine = async (id) => {
+    await api(`/line-items/${id}?editedBy=${encodeURIComponent(getUserName())}`, { method: 'DELETE' });
+    reload();
+  };
+  const copyLine = async (id) => {
+    lineItemClipboard = await api(`/line-items/${id}/with-children`);
+    reload();
+  };
+  const pasteLine = async () => {
+    if (!lineItemClipboard) return;
+    const src = lineItemClipboard.lineItem;
+    const newItem = await api(`/versions/${version.id}/line-items`, {
+      method: 'POST',
+      body: {
+        lineType: 'item',
+        quantity: src.quantity,
+        fixtureType: src.fixtureType,
+        manufacturerId: src.manufacturerId,
+        partNumber: src.partNumber || undefined,
+        partDescription: src.partDescription || undefined,
+        dnBase: src.dnBase,
+        editedBy: getUserName(),
+      },
+    });
+    // Notes/descriptions land right after the new item, in the same order —
+    // since a parent is positional (the run of note/description rows right
+    // below an item), this keeps them tied to it (2026-09-19).
+    for (const child of lineItemClipboard.children) {
+      await api(`/versions/${version.id}/line-items`, {
+        method: 'POST',
+        body: {
+          lineType: child.lineType,
+          noteText: child.noteText || undefined,
+          internalOnly: child.internalOnly,
+          editedBy: getUserName(),
+        },
+      });
+    }
+    reload();
+  };
+
+  if (!sorted.length) {
+    panel.appendChild(el('div', { class: 'empty' }, 'No line items yet — add one below.'));
+  } else {
+    const colgroup = el('colgroup', {}, [
+      el('col', { style: 'width:34px;' }), // trash
+      el('col', { style: 'width:34px;' }), // copy
+      ...LINE_ITEM_COLS.map(c => el('col', { style: `width:${widths[c.key] || c.default}px;` })),
+    ]);
+    const table = el('table', { style: 'table-layout:fixed;' });
+    table.appendChild(colgroup);
+
+    const headerRow = el('tr', {}, [el('th', {}, ''), el('th', {}, '')]);
+    LINE_ITEM_COLS.forEach((c, i) => {
+      const th = el('th', { style: 'position:relative;' }, c.label);
+      const handle = el('div', {
+        style: 'position:absolute; right:0; top:0; bottom:0; width:6px; cursor:col-resize; user-select:none;',
+      });
+      handle.onmousedown = (e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const col = colgroup.children[i + 2];
+        const startWidth = col.getBoundingClientRect().width;
+        const onMove = (me) => {
+          const w = Math.max(40, startWidth + (me.clientX - startX));
+          col.style.width = w + 'px';
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const current = loadColWidths();
+          current[c.key] = parseInt(col.style.width, 10);
+          saveColWidths(current);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      };
+      th.appendChild(handle);
+      headerRow.appendChild(th);
+    });
+    table.appendChild(headerRow);
+
+    // Running sum for Subtotal rows: item lines' DN Extended since the
+    // previous Subtotal (or the start), computed live so an edit above
+    // always keeps a Subtotal correct (2026-09-19).
+    let runningDnExt = 0;
+
     sorted.forEach(li => {
-      if (li.isNote) {
-        const row = el('tr', li.internalOnly ? { style: 'background:#eef0f3;' } : {});
-        const noteCell = el('td', { colspan: '5' }, [
-          el('span', {}, li.noteText || ''),
-          li.internalOnly ? el('span', { class: 'badge locked', style: 'margin-left:8px;' }, 'INTERNAL ONLY') : null,
-        ]);
-        row.append(el('td', {}, String(li.lineNumber)));
-        row.append(noteCell);
+      const trashBtn = el('button', { class: 'secondary', title: 'Delete this line' }, '🗑');
+      trashBtn.onclick = () => deleteLine(li.id);
+      const actionCells = [el('td', {}, trashBtn)];
+
+      if (li.lineType === 'item') {
+        const copyBtn = el('button', { class: 'secondary', title: 'Copy this line' }, '⎘');
+        copyBtn.onclick = () => copyLine(li.id);
+        actionCells.push(el('td', {}, copyBtn));
+      } else {
+        actionCells.push(el('td', {}));
+      }
+
+      if (li.lineType === 'blank') {
+        const row = el('tr', {}, actionCells);
+        row.append(el('td', {}, ''), el('td', { colspan: String(LINE_ITEM_COLS.length - 1) }, ''));
         table.appendChild(row);
         return;
       }
-      const mfr = mfrs.find(m => m.id === li.manufacturerId);
-      const row = el('tr', { class: 'clickable' }, [
-        el('td', {}, String(li.lineNumber)), el('td', { class: 'num' }, li.quantity), el('td', {}, li.fixtureType),
-        el('td', {}, mfr ? mfr.name : '—'), el('td', {}, li.partNumber || '—'), el('td', { class: 'num' }, `$${li.dnBase}`),
-      ]);
-      row.onclick = () => goto('lineItem', { lineItemId: li.id, versionId: state.versionId, quoteId: state.quoteId });
+
+      if (li.lineType === 'subtotal') {
+        const amount = runningDnExt;
+        runningDnExt = 0;
+        const row = el('tr', { style: 'font-weight:700;' }, actionCells);
+        row.append(
+          el('td', {}, ''),
+          el('td', { colspan: String(LINE_ITEM_COLS.length - 2) }, 'Subtotal'),
+          el('td', { class: 'num' }, `$${amount.toFixed(2)}`),
+        );
+        table.appendChild(row);
+        return;
+      }
+
+      if (li.lineType === 'note' || li.lineType === 'description') {
+        const isNote = li.lineType === 'note';
+        // Grey for a normal printable note, light red for internal-only;
+        // descriptions are never shaded (confirmed 2026-09-19).
+        const bg = isNote ? (li.internalOnly ? '#fbe4e2' : '#eef0f3') : '';
+        const row = el('tr', bg ? { style: `background:${bg};` } : {});
+        actionCells.forEach(c => row.appendChild(c));
+        const textInput = el('input', { value: li.noteText || '', style: 'width:100%; border:none; background:transparent;' });
+        textInput.onchange = async () => {
+          await api(`/line-items/${li.id}`, { method: 'PATCH', body: { noteText: textInput.value, editedBy: getUserName() } });
+        };
+        const cellChildren = [textInput];
+        if (isNote) {
+          const internalCheckbox = el('input', { type: 'checkbox' });
+          internalCheckbox.checked = !!li.internalOnly;
+          internalCheckbox.onchange = async () => {
+            await api(`/line-items/${li.id}`, { method: 'PATCH', body: { internalOnly: internalCheckbox.checked, editedBy: getUserName() } });
+            reload();
+          };
+          cellChildren.push(el('label', { style: 'flex-direction:row; align-items:center; gap:4px; display:inline-flex; margin-left:10px;' }, [internalCheckbox, 'Internal only']));
+        }
+        // Merged cell starts in line with the Fixture Type column — # and
+        // Qty stay separate/blank so the text always begins under Fixture
+        // Type regardless of column widths (confirmed 2026-09-19).
+        row.append(
+          el('td', {}, isNote ? 'NTE' : 'DES'),
+          el('td', {}, ''),
+          el('td', { colspan: String(LINE_ITEM_COLS.length - 2) }, cellChildren),
+        );
+        table.appendChild(row);
+        return;
+      }
+
+      // lineType === 'item' — every cell is freely editable inline, no need
+      // to open the line item's own page first (confirmed 2026-09-19).
+      const qtyInput = el('input', { value: li.quantity, style: 'width:100%; border:none; background:transparent;' });
+      const fixtureInput = el('input', { value: li.fixtureType || '', style: 'width:100%; border:none; background:transparent;' });
+      const mfrSelect = el('select', { style: 'width:100%; border:none; background:transparent;' }, mfrs.map(m => el('option', { value: m.id, selected: m.id === li.manufacturerId ? 'true' : undefined }, m.name)));
+      const partInput = el('input', { value: li.partNumber || '', style: 'width:100%; border:none; background:transparent;' });
+      const dnInput = el('input', { value: li.dnBase, style: 'width:100%; border:none; background:transparent; text-align:right;' });
+
+      const patch = async (fields) => { await api(`/line-items/${li.id}`, { method: 'PATCH', body: { ...fields, editedBy: getUserName() } }); };
+      qtyInput.onchange = () => { patch({ quantity: qtyInput.value }); dnExtCell.textContent = `$${(Number(qtyInput.value) * Number(dnInput.value)).toFixed(2)}`; };
+      fixtureInput.onchange = () => patch({ fixtureType: fixtureInput.value });
+      mfrSelect.onchange = () => patch({ manufacturerId: mfrSelect.value }).then(reload);
+      partInput.onchange = () => patch({ partNumber: partInput.value });
+      dnInput.onchange = () => { patch({ dnBase: dnInput.value }); dnExtCell.textContent = `$${(Number(qtyInput.value) * Number(dnInput.value)).toFixed(2)}`; };
+
+      const dnExtended = Number(li.quantity) * Number(li.dnBase);
+      runningDnExt += dnExtended;
+      const dnExtCell = el('td', { class: 'num' }, `$${dnExtended.toFixed(2)}`);
+
+      const row = el('tr', {}, actionCells);
+      row.append(
+        el('td', {}, String(li.lineNumber)),
+        el('td', {}, qtyInput),
+        el('td', {}, fixtureInput),
+        el('td', {}, mfrSelect),
+        el('td', {}, partInput),
+        el('td', {}, dnInput),
+        dnExtCell,
+      );
       table.appendChild(row);
     });
     panel.appendChild(table);
   }
 
-  const addBar = el('div', { style: 'display:flex; gap:10px; margin-top:14px;' });
+  const addBar = el('div', { style: 'display:flex; flex-wrap:wrap; gap:10px; margin-top:14px;' });
   if (!mfrs.length) {
     panel.appendChild(el('div', { class: 'muted', style: 'margin-top:14px;' }, 'Add a manufacturer from the Manufacturers page first.'));
   } else {
     const addLineBtn = el('button', {}, '+ Add line item');
     const addNoteBtn = el('button', { class: 'secondary' }, '+ Add note');
-    addBar.append(addLineBtn, addNoteBtn);
+    const addDescBtn = el('button', { class: 'secondary' }, '+ Add description');
+    const addBlankBtn = el('button', { class: 'secondary' }, '+ Add blank');
+    const addSubtotalBtn = el('button', { class: 'secondary' }, '+ Add subtotal');
+    addBar.append(addLineBtn, addNoteBtn, addDescBtn, addBlankBtn, addSubtotalBtn);
+    if (lineItemClipboard) {
+      const pasteBtn = el('button', { class: 'secondary' }, `Paste "${lineItemClipboard.lineItem.fixtureType || 'line'}"`);
+      pasteBtn.onclick = pasteLine;
+      addBar.appendChild(pasteBtn);
+    }
     panel.appendChild(addBar);
 
     const formHost = el('div');
     panel.appendChild(formHost);
 
-    addLineBtn.onclick = () => {
-      formHost.innerHTML = '';
-      formHost.appendChild(lineItemForm(version, mfrs, formHost));
-    };
-    addNoteBtn.onclick = () => {
-      formHost.innerHTML = '';
-      formHost.appendChild(noteForm(version, formHost));
-    };
+    addLineBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(lineItemForm(version, mfrs, formHost)); };
+    addNoteBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(noteForm(version, formHost, 'note')); };
+    addDescBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(noteForm(version, formHost, 'description')); };
+    addBlankBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } }); reload(); };
+    addSubtotalBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'subtotal', editedBy: getUserName() } }); reload(); };
   }
   app.appendChild(panel);
 }
@@ -620,6 +810,7 @@ function lineItemForm(version, mfrs, formHost) {
     await api(`/versions/${version.id}/line-items`, {
       method: 'POST',
       body: {
+        lineType: 'item',
         quantity: qtyInput.value || '1',
         fixtureType: fixtureInput.value,
         manufacturerId: mfrSelect.value,
@@ -634,25 +825,26 @@ function lineItemForm(version, mfrs, formHost) {
 }
 
 /**
- * Free-text Note row entry — a blank line for internal or printable
- * commentary. "Internal only" keeps it off printed/sent quotes and, while
- * checked here, shades this entry form grey as a preview of that
- * (confirmed 2026-09-19).
+ * Free-text Note/Description row entry — a blank line for internal or
+ * printable commentary (Note) or an always-printing spec line (Description).
+ * "Internal only" (Notes only) keeps it off printed/sent quotes and, while
+ * checked here, tints this entry form as a preview of the light-red
+ * internal shading (confirmed 2026-09-19).
  */
-function noteForm(version, formHost) {
+function noteForm(version, formHost, lineType) {
   const wrap = el('div', { class: 'dialog' });
-  const textInput = el('input', { placeholder: 'Note text', style: 'min-width:320px;' });
-  const internalCheckbox = el('input', { type: 'checkbox' });
-  const checkboxLabel = el('label', { style: 'flex-direction:row; align-items:center; gap:6px;' }, [internalCheckbox, 'Internal only (won’t print)']);
-  internalCheckbox.onchange = () => { wrap.style.background = internalCheckbox.checked ? '#eef0f3' : ''; };
-  wrap.append(
-    el('div', { style: 'display:flex; flex-wrap:wrap; gap:14px; align-items:end;' }, [
-      el('label', {}, ['Note', textInput]),
-      checkboxLabel,
-    ]),
-  );
+  const textInput = el('input', { placeholder: lineType === 'note' ? 'Note text' : 'Description text', style: 'min-width:320px;' });
+  const fields = [el('label', {}, [lineType === 'note' ? 'Note' : 'Description', textInput])];
+  let internalCheckbox = null;
+  if (lineType === 'note') {
+    internalCheckbox = el('input', { type: 'checkbox' });
+    const checkboxLabel = el('label', { style: 'flex-direction:row; align-items:center; gap:6px;' }, [internalCheckbox, 'Internal only (won’t print)']);
+    internalCheckbox.onchange = () => { wrap.style.background = internalCheckbox.checked ? '#fbe4e2' : ''; };
+    fields.push(checkboxLabel);
+  }
+  wrap.append(el('div', { style: 'display:flex; flex-wrap:wrap; gap:14px; align-items:end;' }, fields));
   const actions = el('div', { class: 'dialog-actions' });
-  const addBtn = el('button', {}, 'Add note');
+  const addBtn = el('button', {}, lineType === 'note' ? 'Add note' : 'Add description');
   const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
   cancelBtn.type = 'button';
   cancelBtn.onclick = () => { formHost.innerHTML = ''; };
@@ -663,7 +855,7 @@ function noteForm(version, formHost) {
     if (!textInput.value) return;
     await api(`/versions/${version.id}/line-items`, {
       method: 'POST',
-      body: { isNote: true, noteText: textInput.value, internalOnly: internalCheckbox.checked, editedBy: getUserName() },
+      body: { lineType, noteText: textInput.value, internalOnly: internalCheckbox ? internalCheckbox.checked : false, editedBy: getUserName() },
     });
     render();
   };
@@ -781,8 +973,16 @@ async function showPrintableQuote(versionId, customerId) {
     const table = el('table');
     table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Fixture'), el('th', {}, 'Part #'), el('th', {}, 'Qty'), el('th', {}, 'Unit'), el('th', {}, 'Extended')]));
     q.lineItems.forEach(li => {
-      if (li.isNote) {
-        table.appendChild(el('tr', {}, [el('td', {}, String(li.lineNumber)), el('td', { colspan: '5' }, li.noteText || '')]));
+      if (li.lineType === 'note' || li.lineType === 'description') {
+        table.appendChild(el('tr', {}, [el('td', {}, ''), el('td', { colspan: '5' }, li.noteText || '')]));
+        return;
+      }
+      if (li.lineType === 'blank') {
+        table.appendChild(el('tr', {}, [el('td', {}, ''), el('td', { colspan: '5' }, '')]));
+        return;
+      }
+      if (li.lineType === 'subtotal') {
+        table.appendChild(el('tr', { style: 'font-weight:700;' }, [el('td', {}, ''), el('td', { colspan: '4' }, 'Subtotal'), el('td', { class: 'num' }, `$${li.extendedSellPrice}`)]));
         return;
       }
       table.appendChild(el('tr', {}, [
@@ -815,16 +1015,16 @@ async function renderLineItem() {
   panel.appendChild(el('div', { class: 'panel-header' }, [el('h2', {}, `${li.fixtureType} × ${li.quantity}`), addColBtn]));
 
   const table = el('table');
-  table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Label'), el('th', {}, 'Multiplier'), el('th', {}, 'Sell Price'), el('th', {}, 'Commission')]));
+  table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Label'), el('th', {}, 'Multiplier'), el('th', {}, 'Sell Price'), el('th', {}, 'Extended'), el('th', {}, 'Commission')]));
   // DN is always the first row, automatically — the manufacturer's dealer
   // net cost, not one of the up-to-10 markup columns (confirmed 2026-09-19).
   table.appendChild(el('tr', {}, [
     el('td', {}, '—'), el('td', {}, el('span', { class: 'badge draft' }, 'DN')), el('td', { class: 'num' }, '1.00×'),
-    el('td', { class: 'num' }, `$${li.dnBase}`), el('td', { class: 'num' }, '—'),
+    el('td', { class: 'num' }, `$${li.dnBase}`), el('td', { class: 'num' }, `$${(Number(li.dnBase) * Number(li.quantity)).toFixed(2)}`), el('td', { class: 'num' }, '—'),
   ]));
   li.priceColumns.forEach(pc => table.appendChild(el('tr', {}, [
     el('td', {}, String(pc.columnOrder)), el('td', {}, pc.columnLabel), el('td', { class: 'num' }, `${pc.multiplier}×`),
-    el('td', { class: 'num' }, `$${pc.computedSellPrice}`), el('td', { class: 'num' }, `$${pc.commissionEarnedAtThisColumn}`),
+    el('td', { class: 'num' }, `$${pc.computedSellPrice}`), el('td', { class: 'num' }, `$${pc.extendedSellPrice}`), el('td', { class: 'num' }, `$${pc.commissionEarnedAtThisColumn}`),
   ])));
   panel.appendChild(table);
 
