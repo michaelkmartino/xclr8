@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>xCLR8</title>
+<style>
+  :root {
+    --navy: #16283f;
+    --navy-light: #1f3a5c;
+    --blue: #2563a8;
+    --blue-light: #eaf2fb;
+    --border: #e3e7ed;
+    --bg: #f4f6f9;
+    --text: #1a2433;
+    --muted: #6b7686;
+    --green: #1c7a34;
+    --green-bg: #e3f5e7;
+    --amber: #93630a;
+    --amber-bg: #fdf1dc;
+    --red: #b3261e;
+    --red-bg: #fbe9e8;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--navy);
+    color: #cdd9e6;
+    min-height: 100vh;
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar .brand { padding: 0 20px 20px; }
+  .sidebar .brand h1 { color: white; font-size: 19px; margin: 0; letter-spacing: 0.3px; }
+  .sidebar .brand p { margin: 4px 0 0; font-size: 12px; color: #8ea3bb; }
+  .sidebar nav { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+  .sidebar nav a {
+    padding: 10px 20px;
+    color: #cdd9e6;
+    text-decoration: none;
+    font-size: 14px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+  }
+  .sidebar nav a:hover { background: var(--navy-light); color: white; }
+  .sidebar nav a.active { background: var(--navy-light); color: white; border-left-color: #5ea1f2; font-weight: 600; }
+  .sidebar .whoami {
+    margin-top: auto;
+    padding: 14px 20px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    font-size: 12px;
+    color: #8ea3bb;
+  }
+  .sidebar .whoami b { color: #dce6f0; }
+  .sidebar .whoami a { color: #5ea1f2; cursor: pointer; text-decoration: none; }
+
+  /* ---------- Main content ---------- */
+  .content { flex: 1; min-width: 0; padding: 28px 36px; }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .crumbs a { color: var(--blue); cursor: pointer; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+
+  .panel {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 2px rgba(20, 30, 45, 0.03);
+  }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .panel h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .panel .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--blue-light); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 650; letter-spacing: 0.02em; }
+  .badge.reporting { background: var(--green-bg); color: var(--green); }
+  .badge.draft { background: #eef0f3; color: var(--muted); }
+  .badge.locked { background: var(--amber-bg); color: var(--amber); }
+  .badge.unlocked { background: #eef0f3; color: var(--muted); }
+  .badge.group { background: var(--blue-light); color: var(--blue); }
+  .badge.individual { background: #eef0f3; color: var(--muted); }
+
+  form.inline { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: end; padding-top: 14px; border-top: 1px dashed var(--border); }
+  form.inline label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; font-weight: 500; }
+  input, select {
+    padding: 8px 10px; border: 1px solid #cfd6e0; border-radius: 6px; font-size: 13.5px; min-width: 100px;
+    font-family: inherit; background: white; color: var(--text);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light); }
+  button {
+    padding: 8px 16px; border: none; background: var(--blue); color: white; border-radius: 6px;
+    font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: #1d5088; }
+  button.secondary { background: #eef0f3; color: var(--text); }
+  button.secondary:hover { background: #e2e5ea; }
+  button.danger { background: var(--red-bg); color: var(--red); }
+  button.danger:hover { background: #f6d9d7; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .empty { color: var(--muted); font-size: 13.5px; padding: 10px 0; }
+  .error { background: var(--red-bg); color: var(--red); padding: 10px 14px; border-radius: 8px; font-size: 13.5px; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .row-actions { display: flex; gap: 8px; align-items: center; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .tabs button.tab {
+    background: none; color: var(--muted); font-weight: 600; padding: 10px 16px; border-radius: 0;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button.tab:hover { background: none; color: var(--text); }
+  .tabs button.tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  .quote-sheet { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; background: #fbfcfe; }
+  .quote-sheet h3 { margin: 0 0 4px; }
+  .quote-sheet .total { text-align: right; font-size: 15px; font-weight: 700; margin-top: 10px; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13.5px; margin-bottom: 12px; }
+  .kv b { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <div class="brand">
+    <h1>xCLR8</h1>
+    <p>Quoting engine — Phase 2</p>
+  </div>
+  <nav id="nav"></nav>
+  <div class="whoami" id="whoami"></div>
+</div>
+<div class="content" id="app"></div>
+
+<script>
+// ---------- Identity (stand-in until real login exists) ----------
+function getUserName() {
+  let name = localStorage.getItem('xclr8_username');
+  if (!name) {
+    name = prompt('Your name (used for quote locking):', 'Michael') || 'Michael';
+    localStorage.setItem('xclr8_username', name);
+  }
+  return name;
+}
+function renderWhoAmI() {
+  const el = document.getElementById('whoami');
+  el.innerHTML = '';
+  el.appendChild(document.createTextNode('Working as '));
+  el.appendChild(el2('b', {}, getUserName()));
+  el.appendChild(document.createTextNode(' · '));
+  const change = el2('a', {}, 'change');
+  change.onclick = () => { localStorage.removeItem('xclr8_username'); getUserName(); renderWhoAmI(); };
+  el.appendChild(change);
+}
+
+const app = document.getElementById('app');
+let state = { view: 'jobs' };
+
+async function api(path, opts) {
+  const res = await fetch(path, {
+    method: opts?.method || 'GET',
+    headers: opts?.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: opts?.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!res.ok) {
+    let msg;
+    try { msg = (await res.json()).message; } catch { msg = await res.text(); }
+    throw new Error(Array.isArray(msg) ? msg.join(', ') : (msg || `${res.status}`));
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function el2(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'onclick') node.onclick = v;
+    else if (k === 'html') node.innerHTML = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) {
+    if (c == null) continue;
+    node.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+  }
+  return node;
+}
+const el = el2;
+
+function crumbs(parts) {
+  const wrap = el('div', { class: 'crumbs' });
+  parts.forEach((p, i) => {
+    if (i > 0) wrap.appendChild(document.createTextNode(' / '));
+    wrap.appendChild(p.onClick ? el('a', { onclick: p.onClick }, p.label) : document.createTextNode(p.label));
+  });
+  return wrap;
+}
+function goto(view, extra) { state = { view, ...extra }; render(); }
+
+// ---------- Nav ----------
+const NAV_ITEMS = [
+  { key: 'jobs', label: 'Jobs', view: 'jobs' },
+  { key: 'customers', label: 'Customers', view: 'customers' },
+  { key: 'manufacturers', label: 'Manufacturers', view: 'manufacturers' },
+];
+function renderNav() {
+  const nav = document.getElementById('nav');
+  nav.innerHTML = '';
+  const topLevel = ['jobs', 'job', 'quote', 'version', 'lineItem'].includes(state.view) ? 'jobs'
+    : ['customers'].includes(state.view) ? 'customers'
+    : ['manufacturers'].includes(state.view) ? 'manufacturers' : '';
+  NAV_ITEMS.forEach(item => {
+    const a = el('a', { onclick: () => goto(item.view) }, item.label);
+    if (item.key === topLevel) a.classList.add('active');
+    nav.appendChild(a);
+  });
+}
+
+async function render() {
+  renderNav();
+  renderWhoAmI();
+  app.innerHTML = '';
+  try {
+    if (state.view === 'jobs') await renderJobs();
+    else if (state.view === 'job') await renderJob();
+    else if (state.view === 'quote') await renderQuote();
+    else if (state.view === 'version') await renderVersion();
+    else if (state.view === 'lineItem') await renderLineItem();
+    else if (state.view === 'customers') await renderCustomers();
+    else if (state.view === 'customer') await renderCustomerDetail();
+    else if (state.view === 'manufacturers') await renderManufacturersPage();
+  } catch (e) {
+    app.appendChild(el('div', { class: 'panel' }, el('div', { class: 'error' }, String(e.message || e))));
+  }
+}
+
+// ================= JOBS =================
+async function renderJobs() {
+  app.appendChild(crumbs([{ label: 'Jobs' }]));
+  const jobs = await api('/jobs');
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Jobs (${jobs.length})`)));
+  if (!jobs.length) panel.appendChild(el('div', { class: 'empty' }, 'No jobs yet — add one below.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Name'), el('th', {}, 'Address'), el('th', {}, 'Account')]));
+    jobs.forEach(j => table.appendChild(el('tr', { class: 'clickable', onclick: () => goto('job', { jobId: j.id }) }, [
+      el('td', {}, j.name), el('td', {}, j.address || '—'), el('td', {}, j.accountName || '—'),
+    ])));
+    panel.appendChild(table);
+  }
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['Job name', el('input', { name: 'name', required: 'true' })]),
+    el('label', {}, ['Address', el('input', { name: 'address' })]),
+    el('label', {}, ['Account', el('input', { name: 'accountName' })]),
+    el('button', {}, 'Add job'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    await api('/jobs', { method: 'POST', body: Object.fromEntries(new FormData(form).entries()) });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+async function renderJob() {
+  const job = await api(`/jobs/${state.jobId}`);
+  app.appendChild(crumbs([
+    { label: 'Jobs', onClick: () => goto('jobs') },
+    { label: job.name },
+  ]));
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, [
+    el('h2', {}, `Quotes — ${job.name}`),
+  ]));
+  const quotes = await api(`/jobs/${job.id}/quotes`);
+  if (!quotes.length) panel.appendChild(el('div', { class: 'empty' }, 'No quotes yet — add a bid package below.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Bid Package'), el('th', {}, 'Created')]));
+    quotes.forEach(q => table.appendChild(el('tr', { class: 'clickable', onclick: () => goto('quote', { quoteId: q.id }) }, [
+      el('td', {}, q.bidPackage), el('td', {}, new Date(q.createdAt).toLocaleString()),
+    ])));
+    panel.appendChild(table);
+  }
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['Bid package', el('input', { name: 'bidPackage', placeholder: 'Base Bid' })]),
+    el('button', {}, 'Add quote'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(form).entries());
+    if (!body.bidPackage) delete body.bidPackage;
+    await api(`/jobs/${job.id}/quotes`, { method: 'POST', body });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+// ================= QUOTES / VERSIONS =================
+async function renderQuote() {
+  const quote = await api(`/quotes/${state.quoteId}`);
+  const job = await api(`/jobs/${quote.jobId}`);
+  app.appendChild(crumbs([
+    { label: 'Jobs', onClick: () => goto('jobs') },
+    { label: job.name, onClick: () => goto('job', { jobId: job.id }) },
+    { label: quote.bidPackage },
+  ]));
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Versions — ${quote.bidPackage}`)));
+  const table = el('table');
+  table.appendChild(el('tr', {}, [el('th', {}, 'Version'), el('th', {}, 'Label'), el('th', {}, 'Status'), el('th', {}, 'Lock'), el('th', {}, 'Created')]));
+  quote.versions.forEach(v => {
+    const locked = !!v.lockHolderName;
+    const row = el('tr', { class: 'clickable' }, [
+      el('td', {}, `v${v.versionNumber}`),
+      el('td', {}, v.label || '—'),
+      el('td', {}, v.isReporting ? el('span', { class: 'badge reporting' }, 'Reporting') : el('span', { class: 'badge draft' }, 'Draft')),
+      el('td', {}, locked ? el('span', { class: 'badge locked' }, `🔒 ${v.lockHolderName}`) : el('span', { class: 'badge unlocked' }, 'Open')),
+      el('td', {}, new Date(v.createdAt).toLocaleString()),
+    ]);
+    row.onclick = () => goto('version', { versionId: v.id, quoteId: quote.id });
+    table.appendChild(row);
+  });
+  panel.appendChild(table);
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['New version label', el('input', { name: 'label', placeholder: 'Revised drawings 9/19' })]),
+    el('button', {}, 'Create new version (copies latest)'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(form).entries());
+    if (!body.label) delete body.label;
+    await api(`/quotes/${quote.id}/versions`, { method: 'POST', body });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+async function renderVersion() {
+  const quote = await api(`/quotes/${state.quoteId}`);
+  const version = quote.versions.find(v => v.id === state.versionId);
+  const job = await api(`/jobs/${quote.jobId}`);
+  const tab = state.tab || 'lineItems';
+
+  app.appendChild(crumbs([
+    { label: 'Jobs', onClick: () => goto('jobs') },
+    { label: job.name, onClick: () => goto('job', { jobId: job.id }) },
+    { label: quote.bidPackage, onClick: () => goto('quote', { quoteId: quote.id }) },
+    { label: `v${version.versionNumber}` },
+  ]));
+
+  // --- Lock status panel ---
+  const lockPanel = el('div', { class: 'panel' });
+  const locked = !!version.lockHolderName;
+  const me = getUserName();
+  const statusLine = el('div', { class: 'panel-header' }, [
+    el('div', {}, [
+      el('h2', {}, `v${version.versionNumber}${version.label ? ' — ' + version.label : ''} `),
+      el('span', { class: `badge ${version.isReporting ? 'reporting' : 'draft'}` }, version.isReporting ? 'Reporting' : 'Draft'),
+      ' ',
+      el('span', { class: `badge ${locked ? 'locked' : 'unlocked'}` }, locked ? `🔒 Locked by ${version.lockHolderName}` : 'Unlocked'),
+    ]),
+  ]);
+  lockPanel.appendChild(statusLine);
+  const actions = el('div', { class: 'row-actions' });
+  if (!locked) {
+    const lockBtn = el('button', {}, `Lock as ${me}`);
+    lockBtn.onclick = async () => { await api(`/versions/${version.id}/lock`, { method: 'POST', body: { userName: me } }); render(); };
+    actions.appendChild(lockBtn);
+  } else if (version.lockHolderName === me) {
+    const unlockBtn = el('button', { class: 'secondary' }, 'Release my lock');
+    unlockBtn.onclick = async () => { await api(`/versions/${version.id}/unlock`, { method: 'POST', body: { userName: me } }); render(); };
+    actions.appendChild(unlockBtn);
+  } else {
+    const forceBtn = el('button', { class: 'danger' }, `Force-unlock (held by ${version.lockHolderName})`);
+    forceBtn.onclick = async () => { await api(`/versions/${version.id}/force-unlock`, { method: 'POST', body: { userName: me } }); render(); };
+    actions.appendChild(forceBtn);
+  }
+  if (!version.isReporting) {
+    const reportBtn = el('button', { class: 'secondary' }, 'Use for Salesforce reporting');
+    reportBtn.onclick = async () => { await api(`/quotes/${quote.id}/versions/${version.id}/set-reporting`, { method: 'POST' }); render(); };
+    actions.appendChild(reportBtn);
+  }
+  lockPanel.appendChild(actions);
+  app.appendChild(lockPanel);
+
+  // --- Tabs ---
+  const tabsBar = el('div', { class: 'tabs' });
+  const lineItemsTabBtn = el('button', { class: `tab${tab === 'lineItems' ? ' active' : ''}` }, 'Line Items');
+  lineItemsTabBtn.onclick = () => { state.tab = 'lineItems'; render(); };
+  const printTabBtn = el('button', { class: `tab${tab === 'print' ? ' active' : ''}` }, 'Print Selections');
+  printTabBtn.onclick = () => { state.tab = 'print'; render(); };
+  tabsBar.append(lineItemsTabBtn, printTabBtn);
+  app.appendChild(tabsBar);
+
+  if (tab === 'print') await renderPrintSelectionsTab(version);
+  else await renderLineItemsTab(version);
+}
+
+async function renderLineItemsTab(version) {
+  const [lineItems, mfrs] = await Promise.all([api(`/versions/${version.id}/line-items`), api('/manufacturers')]);
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, 'Line items')));
+  if (!lineItems.length) panel.appendChild(el('div', { class: 'empty' }, 'No line items yet — add one below.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Qty'), el('th', {}, 'Fixture Type'), el('th', {}, 'Manufacturer'), el('th', {}, 'Part #'), el('th', {}, 'DN Base')]));
+    lineItems.forEach(li => {
+      const mfr = mfrs.find(m => m.id === li.manufacturerId);
+      const row = el('tr', { class: 'clickable' }, [
+        el('td', {}, String(li.lineNumber)), el('td', { class: 'num' }, li.quantity), el('td', {}, li.fixtureType),
+        el('td', {}, mfr ? mfr.name : '—'), el('td', {}, li.partNumber || '—'), el('td', { class: 'num' }, `$${li.dnBase}`),
+      ]);
+      row.onclick = () => goto('lineItem', { lineItemId: li.id, versionId: state.versionId, quoteId: state.quoteId });
+      table.appendChild(row);
+    });
+    panel.appendChild(table);
+  }
+  if (!mfrs.length) {
+    panel.appendChild(el('div', { class: 'muted' }, 'Add a manufacturer from the Manufacturers page first.'));
+  } else {
+    const form = el('form', { class: 'inline' });
+    const mfrSelect = el('select', { name: 'manufacturerId' }, mfrs.map(m => el('option', { value: m.id }, m.name)));
+    form.append(
+      el('label', {}, ['Line #', el('input', { name: 'lineNumber', type: 'number', min: '1', value: String(lineItems.length + 1) })]),
+      el('label', {}, ['Qty', el('input', { name: 'quantity', value: '1' })]),
+      el('label', {}, ['Fixture type', el('input', { name: 'fixtureType', required: 'true' })]),
+      el('label', {}, ['Manufacturer', mfrSelect]),
+      el('label', {}, ['Part #', el('input', { name: 'partNumber' })]),
+      el('label', {}, ['DN Base ($)', el('input', { name: 'dnBase', placeholder: '100.00', required: 'true' })]),
+      el('label', {}, ['Commission %', el('input', { name: 'commissionPct', placeholder: '0.10' })]),
+      el('label', {}, ['Overage %', el('input', { name: 'overageSplitPct', placeholder: '0.15' })]),
+      el('button', {}, 'Add line item'),
+    );
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(form).entries());
+      body.lineNumber = Number(body.lineNumber);
+      if (!body.commissionPct) delete body.commissionPct;
+      if (!body.overageSplitPct) delete body.overageSplitPct;
+      await api(`/versions/${version.id}/line-items`, { method: 'POST', body });
+      render();
+    };
+    panel.appendChild(form);
+  }
+  app.appendChild(panel);
+}
+
+async function renderPrintSelectionsTab(version) {
+  const [selections, customers] = await Promise.all([
+    api(`/versions/${version.id}/print-selections`),
+    api('/customers'),
+  ]);
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, [
+    el('h2', {}, 'Print selections'),
+    el('span', { class: 'sub' }),
+  ]));
+  panel.appendChild(el('div', { class: 'muted' }, 'Which price column each customer or group sees when their quote is printed/sent.'));
+  if (!selections.length) panel.appendChild(el('div', { class: 'empty' }, 'No selections set yet.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Customer'), el('th', {}, 'Type'), el('th', {}, 'Column'), el('th', {}, '')]));
+    selections.forEach(s => {
+      const viewBtn = el('button', { class: 'secondary' }, 'View quote');
+      viewBtn.onclick = () => showPrintableQuote(version.id, s.customerId);
+      table.appendChild(el('tr', {}, [
+        el('td', {}, s.customerName),
+        el('td', {}, el('span', { class: `badge ${s.customerType}` }, s.customerType)),
+        el('td', {}, `#${s.selectedColumnOrder}`),
+        el('td', {}, viewBtn),
+      ]));
+    });
+    panel.appendChild(table);
+  }
+  if (!customers.length) {
+    panel.appendChild(el('div', { class: 'muted' }, 'Add a customer from the Customers page first.'));
+  } else {
+    const form = el('form', { class: 'inline' });
+    const custSelect = el('select', { name: 'customerId' }, customers.map(c => el('option', { value: c.id }, `${c.name} (${c.type})`)));
+    form.append(
+      el('label', {}, ['Customer / group', custSelect]),
+      el('label', {}, ['Column # (1-10)', el('input', { name: 'selectedColumnOrder', type: 'number', min: '1', max: '10', value: '1' })]),
+      el('button', {}, 'Set selection'),
+    );
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(form).entries());
+      body.selectedColumnOrder = Number(body.selectedColumnOrder);
+      await api(`/versions/${version.id}/print-selections`, { method: 'POST', body });
+      render();
+    };
+    panel.appendChild(form);
+  }
+  app.appendChild(panel);
+  app.appendChild(el('div', { id: 'quote-preview' }));
+}
+
+async function showPrintableQuote(versionId, customerId) {
+  const container = document.getElementById('quote-preview');
+  container.innerHTML = '';
+  try {
+    const q = await api(`/versions/${versionId}/print-selections/${customerId}/quote`);
+    const panel = el('div', { class: 'panel' });
+    panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, 'Printable quote preview')));
+    const sheet = el('div', { class: 'quote-sheet' });
+    sheet.appendChild(el('h3', {}, `Column #${q.selectedColumnOrder} pricing`));
+    sheet.appendChild(el('div', { class: 'muted' }, `${q.recipients.length} addressed cop${q.recipients.length === 1 ? 'y' : 'ies'} would be generated:`));
+    sheet.appendChild(el('ul', {}, q.recipients.map(r => el('li', {}, r.name))));
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Fixture'), el('th', {}, 'Part #'), el('th', {}, 'Qty'), el('th', {}, 'Unit'), el('th', {}, 'Extended')]));
+    q.lineItems.forEach(li => table.appendChild(el('tr', {}, [
+      el('td', {}, String(li.lineNumber)), el('td', {}, li.fixtureType), el('td', {}, li.partNumber || '—'),
+      el('td', { class: 'num' }, li.quantity), el('td', { class: 'num' }, `$${li.unitSellPrice}`), el('td', { class: 'num' }, `$${li.extendedSellPrice}`),
+    ])));
+    sheet.appendChild(table);
+    sheet.appendChild(el('div', { class: 'total' }, `Total: $${q.quoteTotal}`));
+    panel.appendChild(sheet);
+    container.appendChild(panel);
+  } catch (e) {
+    container.appendChild(el('div', { class: 'panel' }, el('div', { class: 'error' }, String(e.message || e))));
+  }
+}
+
+async function renderLineItem() {
+  const li = await api(`/line-items/${state.lineItemId}`);
+  const quote = await api(`/quotes/${state.quoteId}`);
+  const job = await api(`/jobs/${quote.jobId}`);
+  app.appendChild(crumbs([
+    { label: 'Jobs', onClick: () => goto('jobs') },
+    { label: job.name, onClick: () => goto('job', { jobId: job.id }) },
+    { label: quote.bidPackage, onClick: () => goto('quote', { quoteId: quote.id }) },
+    { label: 'version', onClick: () => goto('version', { versionId: state.versionId, quoteId: state.quoteId }) },
+    { label: `#${li.lineNumber} ${li.fixtureType}` },
+  ]));
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `${li.fixtureType} — DN $${li.dnBase} × ${li.quantity}`)));
+  if (!li.priceColumns.length) panel.appendChild(el('div', { class: 'empty' }, 'No price columns yet — add one below.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Label'), el('th', {}, 'Multiplier'), el('th', {}, 'Sell Price'), el('th', {}, 'Commission')]));
+    li.priceColumns.forEach(pc => table.appendChild(el('tr', {}, [
+      el('td', {}, String(pc.columnOrder)), el('td', {}, pc.columnLabel), el('td', { class: 'num' }, `${pc.multiplier}×`),
+      el('td', { class: 'num' }, `$${pc.computedSellPrice}`), el('td', { class: 'num' }, `$${pc.commissionEarnedAtThisColumn}`),
+    ])));
+    panel.appendChild(table);
+  }
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['Column label', el('input', { name: 'columnLabel', placeholder: 'Contractor' })]),
+    el('label', {}, ['Multiplier', el('input', { name: 'multiplier', placeholder: '1.15' })]),
+    el('label', {}, ['Column # (1-10)', el('input', { name: 'columnOrder', type: 'number', min: '1', max: '10', value: String(li.priceColumns.length + 1) })]),
+    el('button', {}, 'Add price column'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(form).entries());
+    body.columnOrder = Number(body.columnOrder);
+    await api(`/line-items/${li.id}/price-columns`, { method: 'POST', body });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+// ================= CUSTOMERS =================
+async function renderCustomers() {
+  app.appendChild(crumbs([{ label: 'Customers' }]));
+  const customers = await api('/customers');
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Customers (${customers.length})`)));
+  if (!customers.length) panel.appendChild(el('div', { class: 'empty' }, 'No customers yet — add one below.'));
+  else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Name'), el('th', {}, 'Type')]));
+    customers.forEach(c => table.appendChild(el('tr', { class: 'clickable', onclick: () => goto('customer', { customerId: c.id }) }, [
+      el('td', {}, c.name), el('td', {}, el('span', { class: `badge ${c.type}` }, c.type)),
+    ])));
+    panel.appendChild(table);
+  }
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['Name', el('input', { name: 'name', required: 'true' })]),
+    el('label', {}, ['Type', el('select', { name: 'type' }, [el('option', { value: 'individual' }, 'Individual'), el('option', { value: 'group' }, 'Group')])]),
+    el('button', {}, 'Add customer'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    await api('/customers', { method: 'POST', body: Object.fromEntries(new FormData(form).entries()) });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+async function renderCustomerDetail() {
+  const customer = await api(`/customers/${state.customerId}`);
+  app.appendChild(crumbs([
+    { label: 'Customers', onClick: () => goto('customers') },
+    { label: customer.name },
+  ]));
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, [
+    el('h2', {}, customer.name),
+    el('span', { class: `badge ${customer.type}` }, customer.type),
+  ]));
+  if (customer.type === 'group') {
+    if (!customer.members.length) panel.appendChild(el('div', { class: 'empty' }, 'No members yet — add one below.'));
+    else {
+      const table = el('table');
+      table.appendChild(el('tr', {}, el('th', {}, 'Member')));
+      customer.members.forEach(m => table.appendChild(el('tr', {}, el('td', {}, m.name))));
+      panel.appendChild(table);
+    }
+    const allCustomers = (await api('/customers')).filter(c => c.type === 'individual' && c.id !== customer.id);
+    if (allCustomers.length) {
+      const form = el('form', { class: 'inline' });
+      const select = el('select', { name: 'memberCustomerId' }, allCustomers.map(c => el('option', { value: c.id }, c.name)));
+      form.append(el('label', {}, ['Add member', select]), el('button', {}, 'Add to group'));
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        await api(`/customers/${customer.id}/members`, { method: 'POST', body: Object.fromEntries(new FormData(form).entries()) });
+        render();
+      };
+      panel.appendChild(form);
+    }
+  } else {
+    panel.appendChild(el('div', { class: 'muted' }, 'Individual customer — used directly in Print Selections on a quote version.'));
+  }
+  app.appendChild(panel);
+}
+
+// ================= MANUFACTURERS =================
+async function renderManufacturersPage() {
+  app.appendChild(crumbs([{ label: 'Manufacturers' }]));
+  const mfrs = await api('/manufacturers');
+  const panel = el('div', { class: 'panel' });
+  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Manufacturers (${mfrs.length})`)));
+  if (mfrs.length) {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Name'), el('th', {}, 'Std. Commission %'), el('th', {}, 'Std. Overage %')]));
+    mfrs.forEach(m => table.appendChild(el('tr', {}, [
+      el('td', {}, m.name), el('td', { class: 'num' }, m.standardCommissionPct), el('td', { class: 'num' }, m.standardOverageSplitPct),
+    ])));
+    panel.appendChild(table);
+  } else {
+    panel.appendChild(el('div', { class: 'empty' }, 'No manufacturers yet — add one below.'));
+  }
+  const form = el('form', { class: 'inline' });
+  form.append(
+    el('label', {}, ['Manufacturer', el('input', { name: 'name', required: 'true' })]),
+    el('label', {}, ['Commission % (0-1)', el('input', { name: 'standardCommissionPct', placeholder: '0.10' })]),
+    el('label', {}, ['Overage % (0-1)', el('input', { name: 'standardOverageSplitPct', placeholder: '0.15' })]),
+    el('button', {}, 'Add manufacturer'),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    await api('/manufacturers', { method: 'POST', body: Object.fromEntries(new FormData(form).entries()) });
+    render();
+  };
+  panel.appendChild(form);
+  app.appendChild(panel);
+}
+
+render();
+</script>
+</body>
+</html>
