@@ -38,12 +38,15 @@ export class QuotesService {
   }
 
   /**
-   * Powers the "recent quotes" list on the Jobs landing page — every
-   * version across every job, newest activity first, so anyone opening the
-   * app sees what's actively being worked on and by whom (2026-09-19).
+   * Powers the "recent quotes" list on the Jobs landing page — one row per
+   * JOB (not per version), newest activity first, so it reads as "what jobs
+   * has anyone touched lately" rather than a flat version log. Each row
+   * carries its most-recently-touched version/bid-package for context, but
+   * the row represents the job and clicks through to the job's versions
+   * page, not straight into that one version (confirmed 2026-09-19).
    */
-  async findRecentVersions(limit = 15) {
-    return this.db
+  async findRecentJobs(limit = 15) {
+    const rows = await this.db
       .select({
         versionId: schema.quoteVersions.id,
         quoteId: schema.quoteVersions.quoteId,
@@ -60,8 +63,17 @@ export class QuotesService {
       .from(schema.quoteVersions)
       .innerJoin(schema.quotes, eq(schema.quotes.id, schema.quoteVersions.quoteId))
       .innerJoin(schema.jobs, eq(schema.jobs.id, schema.quotes.jobId))
-      .orderBy(desc(schema.quoteVersions.updatedAt))
-      .limit(limit);
+      .orderBy(desc(schema.quoteVersions.updatedAt));
+
+    const seenJobs = new Set<string>();
+    const perJob = [];
+    for (const row of rows) {
+      if (seenJobs.has(row.jobId)) continue;
+      seenJobs.add(row.jobId);
+      perJob.push(row);
+      if (perJob.length >= limit) break;
+    }
+    return perJob;
   }
 
   findAllForJob(jobId: string) {

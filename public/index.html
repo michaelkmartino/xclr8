@@ -270,20 +270,22 @@ function timeAgo(dateStr) {
 async function renderJobs() {
   app.appendChild(crumbs([{ label: 'Jobs' }]));
 
-  const recent = await api('/quote-versions/recent');
+  const recent = await api('/recent-jobs');
   if (recent.length) {
     const recentPanel = el('div', { class: 'panel' });
     recentPanel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, 'Recent Quotes')));
     const rtable = el('table');
     rtable.appendChild(el('tr', {}, [
-      el('th', {}, 'Job'), el('th', {}, 'Bid Package'), el('th', {}, 'Version'),
+      el('th', {}, 'Job'), el('th', {}, 'Last Worked On'),
       el('th', {}, 'Status'), el('th', {}, 'Last Modified'), el('th', {}, 'Last Edited By'),
     ]));
+    // One row per job (most-recently-touched version, for context) — click
+    // goes to that job's versions page, not straight into the one version
+    // (confirmed 2026-09-19).
     recent.forEach(r => {
       const row = el('tr', { class: 'clickable' }, [
         el('td', {}, r.jobName),
-        el('td', {}, r.bidPackage),
-        el('td', {}, `v${r.versionNumber}${r.label ? ' — ' + r.label : ''}`),
+        el('td', {}, `${r.bidPackage} — v${r.versionNumber}${r.label ? ' — ' + r.label : ''}`),
         el('td', {}, [
           r.isReporting ? el('span', { class: 'badge reporting' }, 'Reporting') : el('span', { class: 'badge draft' }, 'Draft'),
           ' ',
@@ -292,7 +294,7 @@ async function renderJobs() {
         el('td', {}, timeAgo(r.updatedAt)),
         el('td', {}, r.lastEditedBy || '—'),
       ]);
-      row.onclick = () => goto('version', { versionId: r.versionId, quoteId: r.quoteId });
+      row.onclick = () => goto('job', { jobId: r.jobId });
       rtable.appendChild(row);
     });
     recentPanel.appendChild(rtable);

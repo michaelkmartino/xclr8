@@ -8,9 +8,11 @@ import { LockDto } from './dto/lock.dto.js';
 export class QuotesController {
   constructor(private readonly quotesService: QuotesService) {}
 
-  @Get('quote-versions/recent')
-  findRecentVersions() {
-    return this.quotesService.findRecentVersions();
+  // Not nested under /jobs/:id — that route (JobsController) would treat
+  // "recent" as a job id and shadow this one.
+  @Get('recent-jobs')
+  findRecentJobs() {
+    return this.quotesService.findRecentJobs();
   }
 
   @Post('jobs/:jobId/quotes')
