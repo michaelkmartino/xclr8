@@ -2,6 +2,7 @@ import { Body, Controller, Get, NotFoundException, Param, Post } from '@nestjs/c
 import { LineItemsService } from './line-items.service.js';
 import { CreateLineItemDto } from './dto/create-line-item.dto.js';
 import { CreatePriceColumnDto } from './dto/create-price-column.dto.js';
+import { SetCommissionStructureDto } from './dto/set-commission-structure.dto.js';
 
 @Controller()
 export class LineItemsController {
@@ -15,6 +16,16 @@ export class LineItemsController {
   @Get('versions/:versionId/line-items')
   findAllForVersion(@Param('versionId') versionId: string) {
     return this.lineItemsService.findAllForVersion(versionId);
+  }
+
+  @Get('versions/:versionId/commission-structure')
+  getCommissionStructure(@Param('versionId') versionId: string) {
+    return this.lineItemsService.getCommissionStructure(versionId);
+  }
+
+  @Post('versions/:versionId/commission-structure')
+  setCommissionStructure(@Param('versionId') versionId: string, @Body() dto: SetCommissionStructureDto) {
+    return this.lineItemsService.setCommissionStructure(versionId, dto);
   }
 
   @Get('line-items/:id')

@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { DB } from '../db/db.module.js';
 import * as schema from '../db/schema.js';
 import { SetPrintSelectionDto } from './dto/set-print-selection.dto.js';
@@ -111,10 +111,30 @@ export class PrintSelectionsService {
     const lineItems = await this.db
       .select()
       .from(schema.lineItems)
-      .where(eq(schema.lineItems.quoteVersionId, quoteVersionId));
+      .where(eq(schema.lineItems.quoteVersionId, quoteVersionId))
+      .orderBy(asc(schema.lineItems.lineNumber));
 
-    const pricedLines = [];
+    const pricedLines: Array<{
+      lineNumber: number;
+      isNote?: boolean;
+      noteText?: string | null;
+      fixtureType?: string | null;
+      partNumber?: string | null;
+      partDescription?: string | null;
+      quantity?: string;
+      unitSellPrice?: string;
+      extendedSellPrice?: string;
+      priceColumnLabel?: string;
+    }> = [];
     for (const li of lineItems) {
+      // Internal-only notes never appear on a printed/sent quote; other
+      // notes print as a plain text line, unpriced (confirmed 2026-09-19).
+      if (li.isNote) {
+        if (li.internalOnly) continue;
+        pricedLines.push({ lineNumber: li.lineNumber, isNote: true, noteText: li.noteText });
+        continue;
+      }
+
       const [column] = await this.db
         .select()
         .from(schema.priceColumns)
@@ -141,7 +161,7 @@ export class PrintSelectionsService {
       });
     }
 
-    const quoteTotal = pricedLines.reduce((sum, l) => sum + Number(l.extendedSellPrice), 0);
+    const quoteTotal = pricedLines.reduce((sum, l) => sum + Number(l.extendedSellPrice ?? 0), 0);
 
     return {
       quoteVersionId,

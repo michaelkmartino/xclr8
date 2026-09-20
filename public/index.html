@@ -527,12 +527,27 @@ async function renderVersion() {
 async function renderLineItemsTab(version) {
   const [lineItems, mfrs] = await Promise.all([api(`/versions/${version.id}/line-items`), api('/manufacturers')]);
   const panel = el('div', { class: 'panel' });
-  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, 'Line items')));
-  if (!lineItems.length) panel.appendChild(el('div', { class: 'empty' }, 'No line items yet — add one below.'));
+  const commissionBtn = el('button', { class: 'secondary' }, 'Commission Structure');
+  commissionBtn.onclick = () => openCommissionStructureDialog(version, panel);
+  panel.appendChild(el('div', { class: 'panel-header' }, [el('h2', {}, 'Line items'), commissionBtn]));
+
+  const sorted = [...lineItems].sort((a, b) => a.lineNumber - b.lineNumber);
+  if (!sorted.length) panel.appendChild(el('div', { class: 'empty' }, 'No line items yet — add one below.'));
   else {
     const table = el('table');
     table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Qty'), el('th', {}, 'Fixture Type'), el('th', {}, 'Manufacturer'), el('th', {}, 'Part #'), el('th', {}, 'DN Base')]));
-    lineItems.forEach(li => {
+    sorted.forEach(li => {
+      if (li.isNote) {
+        const row = el('tr', li.internalOnly ? { style: 'background:#eef0f3;' } : {});
+        const noteCell = el('td', { colspan: '5' }, [
+          el('span', {}, li.noteText || ''),
+          li.internalOnly ? el('span', { class: 'badge locked', style: 'margin-left:8px;' }, 'INTERNAL ONLY') : null,
+        ]);
+        row.append(el('td', {}, String(li.lineNumber)));
+        row.append(noteCell);
+        table.appendChild(row);
+        return;
+      }
       const mfr = mfrs.find(m => m.id === li.manufacturerId);
       const row = el('tr', { class: 'clickable' }, [
         el('td', {}, String(li.lineNumber)), el('td', { class: 'num' }, li.quantity), el('td', {}, li.fixtureType),
@@ -543,35 +558,160 @@ async function renderLineItemsTab(version) {
     });
     panel.appendChild(table);
   }
+
+  const addBar = el('div', { style: 'display:flex; gap:10px; margin-top:14px;' });
   if (!mfrs.length) {
-    panel.appendChild(el('div', { class: 'muted' }, 'Add a manufacturer from the Manufacturers page first.'));
+    panel.appendChild(el('div', { class: 'muted', style: 'margin-top:14px;' }, 'Add a manufacturer from the Manufacturers page first.'));
   } else {
-    const form = el('form', { class: 'inline' });
-    const mfrSelect = el('select', { name: 'manufacturerId' }, mfrs.map(m => el('option', { value: m.id }, m.name)));
-    form.append(
-      el('label', {}, ['Line #', el('input', { name: 'lineNumber', type: 'number', min: '1', value: String(lineItems.length + 1) })]),
-      el('label', {}, ['Qty', el('input', { name: 'quantity', value: '1' })]),
-      el('label', {}, ['Fixture type', el('input', { name: 'fixtureType', required: 'true' })]),
-      el('label', {}, ['Manufacturer', mfrSelect]),
-      el('label', {}, ['Part #', el('input', { name: 'partNumber' })]),
-      el('label', {}, ['DN Base ($)', el('input', { name: 'dnBase', placeholder: '100.00', required: 'true' })]),
-      el('label', {}, ['Commission %', el('input', { name: 'commissionPct', placeholder: '0.10' })]),
-      el('label', {}, ['Overage %', el('input', { name: 'overageSplitPct', placeholder: '0.15' })]),
-      el('button', {}, 'Add line item'),
-    );
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const body = Object.fromEntries(new FormData(form).entries());
-      body.lineNumber = Number(body.lineNumber);
-      if (!body.commissionPct) delete body.commissionPct;
-      if (!body.overageSplitPct) delete body.overageSplitPct;
-      body.editedBy = getUserName();
-      await api(`/versions/${version.id}/line-items`, { method: 'POST', body });
-      render();
+    const addLineBtn = el('button', {}, '+ Add line item');
+    const addNoteBtn = el('button', { class: 'secondary' }, '+ Add note');
+    addBar.append(addLineBtn, addNoteBtn);
+    panel.appendChild(addBar);
+
+    const formHost = el('div');
+    panel.appendChild(formHost);
+
+    addLineBtn.onclick = () => {
+      formHost.innerHTML = '';
+      formHost.appendChild(lineItemForm(version, mfrs, formHost));
     };
-    panel.appendChild(form);
+    addNoteBtn.onclick = () => {
+      formHost.innerHTML = '';
+      formHost.appendChild(noteForm(version, formHost));
+    };
   }
   app.appendChild(panel);
+}
+
+/**
+ * Fixture-line entry form — fields stack in their own row, with "Add line
+ * item" on its own line below and left-aligned, rather than trailing the
+ * last field (confirmed 2026-09-19). No Line # (server-assigned) and no
+ * Commission/Overage % (auto-populated from the Manufacturer).
+ */
+function lineItemForm(version, mfrs, formHost) {
+  const wrap = el('div', { class: 'dialog' });
+  const mfrSelect = el('select', { name: 'manufacturerId' }, mfrs.map(m => el('option', { value: m.id }, m.name)));
+  const qtyInput = el('input', { value: '1' });
+  const fixtureInput = el('input', { required: 'true' });
+  const partInput = el('input', {});
+  const dnInput = el('input', { placeholder: '100.00', required: 'true' });
+  wrap.append(
+    el('div', { style: 'display:flex; flex-wrap:wrap; gap:10px;' }, [
+      el('label', {}, ['Qty', qtyInput]),
+      el('label', {}, ['Fixture type', fixtureInput]),
+      el('label', {}, ['Manufacturer', mfrSelect]),
+      el('label', {}, ['Part #', partInput]),
+      el('label', {}, ['DN Base ($)', dnInput]),
+    ]),
+  );
+  const actions = el('div', { class: 'dialog-actions' });
+  const addBtn = el('button', {}, 'Add line item');
+  const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
+  cancelBtn.type = 'button';
+  cancelBtn.onclick = () => { formHost.innerHTML = ''; };
+  actions.append(addBtn, cancelBtn);
+  wrap.appendChild(actions);
+
+  addBtn.onclick = async () => {
+    if (!fixtureInput.value || !dnInput.value) { fixtureInput.reportValidity?.(); dnInput.reportValidity?.(); return; }
+    await api(`/versions/${version.id}/line-items`, {
+      method: 'POST',
+      body: {
+        quantity: qtyInput.value || '1',
+        fixtureType: fixtureInput.value,
+        manufacturerId: mfrSelect.value,
+        partNumber: partInput.value || undefined,
+        dnBase: dnInput.value,
+        editedBy: getUserName(),
+      },
+    });
+    render();
+  };
+  return wrap;
+}
+
+/**
+ * Free-text Note row entry — a blank line for internal or printable
+ * commentary. "Internal only" keeps it off printed/sent quotes and, while
+ * checked here, shades this entry form grey as a preview of that
+ * (confirmed 2026-09-19).
+ */
+function noteForm(version, formHost) {
+  const wrap = el('div', { class: 'dialog' });
+  const textInput = el('input', { placeholder: 'Note text', style: 'min-width:320px;' });
+  const internalCheckbox = el('input', { type: 'checkbox' });
+  const checkboxLabel = el('label', { style: 'flex-direction:row; align-items:center; gap:6px;' }, [internalCheckbox, 'Internal only (won’t print)']);
+  internalCheckbox.onchange = () => { wrap.style.background = internalCheckbox.checked ? '#eef0f3' : ''; };
+  wrap.append(
+    el('div', { style: 'display:flex; flex-wrap:wrap; gap:14px; align-items:end;' }, [
+      el('label', {}, ['Note', textInput]),
+      checkboxLabel,
+    ]),
+  );
+  const actions = el('div', { class: 'dialog-actions' });
+  const addBtn = el('button', {}, 'Add note');
+  const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
+  cancelBtn.type = 'button';
+  cancelBtn.onclick = () => { formHost.innerHTML = ''; };
+  actions.append(addBtn, cancelBtn);
+  wrap.appendChild(actions);
+
+  addBtn.onclick = async () => {
+    if (!textInput.value) return;
+    await api(`/versions/${version.id}/line-items`, {
+      method: 'POST',
+      body: { isNote: true, noteText: textInput.value, internalOnly: internalCheckbox.checked, editedBy: getUserName() },
+    });
+    render();
+  };
+  return wrap;
+}
+
+/**
+ * "Commission Structure" — lists every manufacturer actually used on this
+ * quote version, with its currently effective commission/overage (an
+ * override here, or the manufacturer's standard rate), editable per
+ * manufacturer for this quote only (confirmed 2026-09-19).
+ */
+async function openCommissionStructureDialog(version, panel) {
+  const existing = panel.querySelector('.commission-dialog');
+  if (existing) { existing.remove(); return; }
+
+  const rows = await api(`/versions/${version.id}/commission-structure`);
+  const wrap = el('div', { class: 'dialog commission-dialog' });
+  wrap.appendChild(el('div', { class: 'dialog-title' }, 'Commission Structure for this quote'));
+  if (!rows.length) {
+    wrap.appendChild(el('div', { class: 'muted' }, 'No manufacturers on this quote yet — add a line item first.'));
+  } else {
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', {}, 'Manufacturer'), el('th', {}, 'Commission %'), el('th', {}, 'Overage %'), el('th', {}, '')]));
+    rows.forEach(r => {
+      const commissionInput = el('input', { value: r.commissionPct, style: 'width:80px;' });
+      const overageInput = el('input', { value: r.overageSplitPct, style: 'width:80px;' });
+      const saveBtn = el('button', { class: 'secondary' }, 'Save');
+      saveBtn.onclick = async () => {
+        await api(`/versions/${version.id}/commission-structure`, {
+          method: 'POST',
+          body: {
+            manufacturerId: r.manufacturerId,
+            commissionPct: commissionInput.value,
+            overageSplitPct: overageInput.value,
+            editedBy: getUserName(),
+          },
+        });
+        render();
+      };
+      table.appendChild(el('tr', {}, [
+        el('td', {}, r.manufacturerName + (r.isOverridden ? ' (overridden)' : '')),
+        el('td', {}, commissionInput),
+        el('td', {}, overageInput),
+        el('td', {}, saveBtn),
+      ]));
+    });
+    wrap.appendChild(table);
+  }
+  panel.appendChild(wrap);
 }
 
 async function renderPrintSelectionsTab(version) {
@@ -638,10 +778,16 @@ async function showPrintableQuote(versionId, customerId) {
     sheet.appendChild(el('ul', {}, q.recipients.map(r => el('li', {}, r.name))));
     const table = el('table');
     table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Fixture'), el('th', {}, 'Part #'), el('th', {}, 'Qty'), el('th', {}, 'Unit'), el('th', {}, 'Extended')]));
-    q.lineItems.forEach(li => table.appendChild(el('tr', {}, [
-      el('td', {}, String(li.lineNumber)), el('td', {}, li.fixtureType), el('td', {}, li.partNumber || '—'),
-      el('td', { class: 'num' }, li.quantity), el('td', { class: 'num' }, `$${li.unitSellPrice}`), el('td', { class: 'num' }, `$${li.extendedSellPrice}`),
-    ])));
+    q.lineItems.forEach(li => {
+      if (li.isNote) {
+        table.appendChild(el('tr', {}, [el('td', {}, String(li.lineNumber)), el('td', { colspan: '5' }, li.noteText || '')]));
+        return;
+      }
+      table.appendChild(el('tr', {}, [
+        el('td', {}, String(li.lineNumber)), el('td', {}, li.fixtureType), el('td', {}, li.partNumber || '—'),
+        el('td', { class: 'num' }, li.quantity), el('td', { class: 'num' }, `$${li.unitSellPrice}`), el('td', { class: 'num' }, `$${li.extendedSellPrice}`),
+      ]));
+    });
     sheet.appendChild(table);
     sheet.appendChild(el('div', { class: 'total' }, `Total: $${q.quoteTotal}`));
     panel.appendChild(sheet);
@@ -663,33 +809,61 @@ async function renderLineItem() {
     { label: `#${li.lineNumber} ${li.fixtureType}` },
   ]));
   const panel = el('div', { class: 'panel' });
-  panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `${li.fixtureType} — DN $${li.dnBase} × ${li.quantity}`)));
-  if (!li.priceColumns.length) panel.appendChild(el('div', { class: 'empty' }, 'No price columns yet — add one below.'));
-  else {
-    const table = el('table');
-    table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Label'), el('th', {}, 'Multiplier'), el('th', {}, 'Sell Price'), el('th', {}, 'Commission')]));
-    li.priceColumns.forEach(pc => table.appendChild(el('tr', {}, [
-      el('td', {}, String(pc.columnOrder)), el('td', {}, pc.columnLabel), el('td', { class: 'num' }, `${pc.multiplier}×`),
-      el('td', { class: 'num' }, `$${pc.computedSellPrice}`), el('td', { class: 'num' }, `$${pc.commissionEarnedAtThisColumn}`),
-    ])));
-    panel.appendChild(table);
-  }
-  const form = el('form', { class: 'inline' });
-  form.append(
-    el('label', {}, ['Column label', el('input', { name: 'columnLabel', placeholder: 'Contractor' })]),
-    el('label', {}, ['Multiplier', el('input', { name: 'multiplier', placeholder: '1.15' })]),
-    el('label', {}, ['Column # (1-10)', el('input', { name: 'columnOrder', type: 'number', min: '1', max: '10', value: String(li.priceColumns.length + 1) })]),
-    el('button', {}, 'Add price column'),
-  );
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(form).entries());
-    body.columnOrder = Number(body.columnOrder);
-    body.editedBy = getUserName();
-    await api(`/line-items/${li.id}/price-columns`, { method: 'POST', body });
-    render();
+  const addColBtn = el('button', { class: 'secondary' }, '+ Add price column');
+  panel.appendChild(el('div', { class: 'panel-header' }, [el('h2', {}, `${li.fixtureType} × ${li.quantity}`), addColBtn]));
+
+  const table = el('table');
+  table.appendChild(el('tr', {}, [el('th', {}, '#'), el('th', {}, 'Label'), el('th', {}, 'Multiplier'), el('th', {}, 'Sell Price'), el('th', {}, 'Commission')]));
+  // DN is always the first row, automatically — the manufacturer's dealer
+  // net cost, not one of the up-to-10 markup columns (confirmed 2026-09-19).
+  table.appendChild(el('tr', {}, [
+    el('td', {}, '—'), el('td', {}, el('span', { class: 'badge draft' }, 'DN')), el('td', { class: 'num' }, '1.00×'),
+    el('td', { class: 'num' }, `$${li.dnBase}`), el('td', { class: 'num' }, '—'),
+  ]));
+  li.priceColumns.forEach(pc => table.appendChild(el('tr', {}, [
+    el('td', {}, String(pc.columnOrder)), el('td', {}, pc.columnLabel), el('td', { class: 'num' }, `${pc.multiplier}×`),
+    el('td', { class: 'num' }, `$${pc.computedSellPrice}`), el('td', { class: 'num' }, `$${pc.commissionEarnedAtThisColumn}`),
+  ])));
+  panel.appendChild(table);
+
+  const formHost = el('div');
+  panel.appendChild(formHost);
+  addColBtn.onclick = () => {
+    if (formHost.childElementCount) { formHost.innerHTML = ''; return; }
+    const wrap = el('div', { class: 'dialog' });
+    const labelInput = el('input', { placeholder: 'Contractor' });
+    const multiplierInput = el('input', { placeholder: '1.15' });
+    const orderInput = el('input', { type: 'number', min: '1', max: '10', value: String(li.priceColumns.length + 1) });
+    wrap.appendChild(el('div', { class: 'dialog-title' }, 'Add price column'));
+    wrap.append(
+      el('div', { style: 'display:flex; flex-wrap:wrap; gap:10px;' }, [
+        el('label', {}, ['Column label', labelInput]),
+        el('label', {}, ['Multiplier', multiplierInput]),
+        el('label', {}, ['Column # (1-10)', orderInput]),
+      ]),
+    );
+    const actions = el('div', { class: 'dialog-actions' });
+    const saveBtn = el('button', {}, 'Add price column');
+    const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
+    cancelBtn.type = 'button';
+    cancelBtn.onclick = () => { formHost.innerHTML = ''; };
+    actions.append(saveBtn, cancelBtn);
+    wrap.appendChild(actions);
+    saveBtn.onclick = async () => {
+      if (!labelInput.value || !multiplierInput.value) return;
+      await api(`/line-items/${li.id}/price-columns`, {
+        method: 'POST',
+        body: {
+          columnLabel: labelInput.value,
+          multiplier: multiplierInput.value,
+          columnOrder: Number(orderInput.value),
+          editedBy: getUserName(),
+        },
+      });
+      render();
+    };
+    formHost.appendChild(wrap);
   };
-  panel.appendChild(form);
   app.appendChild(panel);
 }
 
@@ -768,11 +942,27 @@ async function renderManufacturersPage() {
   panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Manufacturers (${mfrs.length})`)));
   if (mfrs.length) {
     const table = el('table');
-    table.appendChild(el('tr', {}, [el('th', {}, 'Name'), el('th', {}, 'Std. Commission %'), el('th', {}, 'Std. Overage %')]));
-    mfrs.forEach(m => table.appendChild(el('tr', {}, [
-      el('td', {}, m.name), el('td', { class: 'num' }, m.standardCommissionPct), el('td', { class: 'num' }, m.standardOverageSplitPct),
-    ])));
+    table.appendChild(el('tr', {}, [el('th', {}, 'Name'), el('th', {}, 'Std. Commission %'), el('th', {}, 'Std. Overage %'), el('th', {}, '')]));
+    mfrs.forEach(m => {
+      const commissionInput = el('input', { value: m.standardCommissionPct, style: 'width:80px;' });
+      const overageInput = el('input', { value: m.standardOverageSplitPct, style: 'width:80px;' });
+      const saveBtn = el('button', { class: 'secondary' }, 'Save');
+      saveBtn.onclick = async () => {
+        await api(`/manufacturers/${m.id}`, {
+          method: 'PATCH',
+          body: { standardCommissionPct: commissionInput.value, standardOverageSplitPct: overageInput.value },
+        });
+        render();
+      };
+      table.appendChild(el('tr', {}, [
+        el('td', {}, m.name),
+        el('td', { class: 'num' }, commissionInput),
+        el('td', { class: 'num' }, overageInput),
+        el('td', {}, saveBtn),
+      ]));
+    });
     panel.appendChild(table);
+    panel.appendChild(el('div', { class: 'muted' }, "These standard rates auto-populate new line items for that manufacturer. Changing them here doesn't touch quotes already created — use a quote's Commission Structure button to adjust an existing quote."));
   } else {
     panel.appendChild(el('div', { class: 'empty' }, 'No manufacturers yet — add one below.'));
   }

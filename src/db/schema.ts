@@ -119,17 +119,45 @@ export const quoteVersions = pgTable('quote_versions', {
 export const lineItems = pgTable('line_items', {
   id: uuid('id').defaultRandom().primaryKey(),
   quoteVersionId: uuid('quote_version_id').notNull().references(() => quoteVersions.id),
-  lineNumber: integer('line_number').notNull(),
+  lineNumber: integer('line_number').notNull(), // server-assigned, never client-editable (2026-09-19)
   quantity: numeric('quantity', { precision: 12, scale: 2 }).notNull().default('1'),
-  fixtureType: text('fixture_type').notNull(),
-  manufacturerId: uuid('manufacturer_id').notNull().references(() => manufacturers.id),
+  // Nullable: a Note row (isNote = true) has no fixture/manufacturer/pricing,
+  // it's a free-text line that shares the line-number sequence (2026-09-19).
+  fixtureType: text('fixture_type'),
+  manufacturerId: uuid('manufacturer_id').references(() => manufacturers.id),
   partNumber: text('part_number'),
   partDescription: text('part_description'),
   notes: text('notes'),
   dnBase: numeric('dn_base', { precision: 12, scale: 2 }).notNull().default('0'),
+  // Auto-populated server-side from the Manufacturer's standard rates (or
+  // this quote's Commission Structure override) at line-creation time — not
+  // user-entered per line item anymore (confirmed 2026-09-19).
   commissionPct: numeric('commission_pct', { precision: 6, scale: 4 }),
   overageSplitPct: numeric('overage_split_pct', { precision: 6, scale: 4 }),
+  // ---- Note row fields (2026-09-19) ----
+  isNote: boolean('is_note').notNull().default(false),
+  noteText: text('note_text'),
+  // Internal-only notes never appear on a printed/sent quote.
+  internalOnly: boolean('internal_only').notNull().default(false),
 });
+
+// ---------------------------------------------------------------------------
+// Quote Version × Manufacturer Commission Structure — an explicit, per-quote
+// override of a manufacturer's standard commission/overage split, set via
+// the "Commission Structure" dialog. When present, it applies to every line
+// item using that manufacturer on that quote version, overriding the
+// Manufacturer master default (confirmed 2026-09-19).
+// ---------------------------------------------------------------------------
+
+export const quoteManufacturerCommissions = pgTable('quote_manufacturer_commissions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  quoteVersionId: uuid('quote_version_id').notNull().references(() => quoteVersions.id),
+  manufacturerId: uuid('manufacturer_id').notNull().references(() => manufacturers.id),
+  commissionPct: numeric('commission_pct', { precision: 6, scale: 4 }).notNull(),
+  overageSplitPct: numeric('overage_split_pct', { precision: 6, scale: 4 }).notNull(),
+}, (table) => ({
+  uniquePerVersion: uniqueIndex('quote_mfr_commissions_version_mfr_unique').on(table.quoteVersionId, table.manufacturerId),
+}));
 
 // ---------------------------------------------------------------------------
 // Price Column — up to 10 per Line Item, confirmed 2026-09-19. Multiplier is
@@ -221,6 +249,11 @@ export const lineItemsRelations = relations(lineItems, ({ one, many }) => ({
 
 export const priceColumnsRelations = relations(priceColumns, ({ one }) => ({
   lineItem: one(lineItems, { fields: [priceColumns.lineItemId], references: [lineItems.id] }),
+}));
+
+export const quoteManufacturerCommissionsRelations = relations(quoteManufacturerCommissions, ({ one }) => ({
+  quoteVersion: one(quoteVersions, { fields: [quoteManufacturerCommissions.quoteVersionId], references: [quoteVersions.id] }),
+  manufacturer: one(manufacturers, { fields: [quoteManufacturerCommissions.manufacturerId], references: [manufacturers.id] }),
 }));
 
 export const customersRelations = relations(customers, ({ many }) => ({

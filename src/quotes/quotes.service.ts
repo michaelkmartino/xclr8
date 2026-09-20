@@ -118,6 +118,24 @@ export class QuotesService {
         return newVersion;
       }
 
+      // Carry over this quote's manufacturer commission overrides too, so a
+      // copied version keeps the same effective rates as its source
+      // (2026-09-19).
+      const sourceOverrides = await tx
+        .select()
+        .from(schema.quoteManufacturerCommissions)
+        .where(eq(schema.quoteManufacturerCommissions.quoteVersionId, sourceVersionId));
+      if (sourceOverrides.length > 0) {
+        await tx.insert(schema.quoteManufacturerCommissions).values(
+          sourceOverrides.map((o) => ({
+            quoteVersionId: newVersion.id,
+            manufacturerId: o.manufacturerId,
+            commissionPct: o.commissionPct,
+            overageSplitPct: o.overageSplitPct,
+          })),
+        );
+      }
+
       const sourceLineItems = await tx
         .select()
         .from(schema.lineItems)
@@ -138,8 +156,13 @@ export class QuotesService {
             dnBase: li.dnBase,
             commissionPct: li.commissionPct,
             overageSplitPct: li.overageSplitPct,
+            isNote: li.isNote,
+            noteText: li.noteText,
+            internalOnly: li.internalOnly,
           })
           .returning();
+
+        if (li.isNote) continue; // notes have no price columns to copy
 
         const sourceColumns = await tx
           .select()

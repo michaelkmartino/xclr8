@@ -1,18 +1,31 @@
-import { IsInt, IsNumberString, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsNumberString, IsOptional, IsString, IsUUID, ValidateIf } from 'class-validator';
 
+/**
+ * Two shapes share this one DTO/endpoint, distinguished by `isNote`
+ * (confirmed 2026-09-19):
+ *  - a normal fixture line: quantity/fixtureType/manufacturerId/dnBase
+ *    required, lineNumber and commission/overage are never client-supplied
+ *    (server assigns the line number and auto-populates commission from the
+ *    Manufacturer's standard rate or this quote's Commission Structure).
+ *  - a Note row (isNote: true): just free-text noteText plus the
+ *    internalOnly flag that keeps it off printed/sent quotes.
+ */
 export class CreateLineItemDto {
-  @IsInt()
-  @Min(1)
-  lineNumber!: number;
+  @IsOptional()
+  @IsBoolean()
+  isNote?: boolean;
 
+  @ValidateIf((o) => !o.isNote)
   @IsNumberString()
-  quantity!: string;
+  quantity?: string;
 
+  @ValidateIf((o) => !o.isNote)
   @IsString()
-  fixtureType!: string;
+  fixtureType?: string;
 
+  @ValidateIf((o) => !o.isNote)
   @IsUUID()
-  manufacturerId!: string;
+  manufacturerId?: string;
 
   @IsOptional()
   @IsString()
@@ -26,16 +39,17 @@ export class CreateLineItemDto {
   @IsString()
   notes?: string;
 
+  @ValidateIf((o) => !o.isNote)
   @IsNumberString()
-  dnBase!: string;
+  dnBase?: string;
+
+  @ValidateIf((o) => o.isNote)
+  @IsString()
+  noteText?: string;
 
   @IsOptional()
-  @IsNumberString()
-  commissionPct?: string;
-
-  @IsOptional()
-  @IsNumberString()
-  overageSplitPct?: string;
+  @IsBoolean()
+  internalOnly?: boolean;
 
   @IsOptional()
   @IsString()
