@@ -196,8 +196,15 @@ async function api(path, opts) {
 function el2(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
+    // Skip undefined/null/false so a conditional attr (e.g.
+    // `selected: cond ? 'true' : undefined`) is actually omitted rather
+    // than being set to the literal string "undefined" — which, on a
+    // boolean attribute like `selected` or `checked`, still counts as
+    // present and silently overrides the real one (2026-09-19 fix).
+    if (v === undefined || v === null || v === false) continue;
     if (k === 'onclick') node.onclick = v;
     else if (k === 'html') node.innerHTML = v;
+    else if (v === true) node.setAttribute(k, '');
     else node.setAttribute(k, v);
   }
   for (const c of [].concat(children)) {
@@ -563,6 +570,12 @@ async function renderLineItemsTab(version) {
     await api(`/line-items/${id}?editedBy=${encodeURIComponent(getUserName())}`, { method: 'DELETE' });
     reload();
   };
+  // Inserts a blank line directly above the given row — the per-row "+"
+  // button and the Ctrl+Shift+= hotkey both call this (2026-09-19).
+  const insertLineAbove = async (id) => {
+    await api(`/line-items/${id}/insert-before`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } });
+    reload();
+  };
   const copyLine = async (id) => {
     lineItemClipboard = await api(`/line-items/${id}/with-children`);
     reload();
@@ -605,13 +618,14 @@ async function renderLineItemsTab(version) {
   } else {
     const colgroup = el('colgroup', {}, [
       el('col', { style: 'width:34px;' }), // trash
+      el('col', { style: 'width:34px;' }), // insert (+)
       el('col', { style: 'width:34px;' }), // copy
       ...LINE_ITEM_COLS.map(c => el('col', { style: `width:${widths[c.key] || c.default}px;` })),
     ]);
     const table = el('table', { style: 'table-layout:fixed;' });
     table.appendChild(colgroup);
 
-    const headerRow = el('tr', {}, [el('th', {}, ''), el('th', {}, '')]);
+    const headerRow = el('tr', {}, [el('th', {}, ''), el('th', {}, ''), el('th', {}, '')]);
     LINE_ITEM_COLS.forEach((c, i) => {
       const th = el('th', { style: 'position:relative;' }, c.label);
       const handle = el('div', {
@@ -620,7 +634,7 @@ async function renderLineItemsTab(version) {
       handle.onmousedown = (e) => {
         e.preventDefault();
         const startX = e.clientX;
-        const col = colgroup.children[i + 2];
+        const col = colgroup.children[i + 3];
         const startWidth = col.getBoundingClientRect().width;
         const onMove = (me) => {
           const w = Math.max(40, startWidth + (me.clientX - startX));
@@ -649,7 +663,9 @@ async function renderLineItemsTab(version) {
     sorted.forEach(li => {
       const trashBtn = el('button', { class: 'secondary', title: 'Delete this line' }, '🗑');
       trashBtn.onclick = () => deleteLine(li.id);
-      const actionCells = [el('td', {}, trashBtn)];
+      const insertBtn = el('button', { class: 'secondary', title: 'Insert a line above this one (Ctrl+Shift+=)' }, '+');
+      insertBtn.onclick = () => insertLineAbove(li.id);
+      const actionCells = [el('td', {}, trashBtn), el('td', {}, insertBtn)];
 
       if (li.lineType === 'item') {
         const copyBtn = el('button', { class: 'secondary', title: 'Copy this line' }, '⎘');
@@ -661,6 +677,7 @@ async function renderLineItemsTab(version) {
 
       if (li.lineType === 'blank') {
         const row = el('tr', {}, actionCells);
+        row.dataset.lineId = li.id;
         row.append(el('td', {}, ''), el('td', { colspan: String(LINE_ITEM_COLS.length - 1) }, ''));
         table.appendChild(row);
         return;
@@ -670,6 +687,7 @@ async function renderLineItemsTab(version) {
         const amount = runningDnExt;
         runningDnExt = 0;
         const row = el('tr', { style: 'font-weight:700;' }, actionCells);
+        row.dataset.lineId = li.id;
         row.append(
           el('td', {}, ''),
           el('td', { colspan: String(LINE_ITEM_COLS.length - 2) }, 'Subtotal'),
@@ -685,6 +703,7 @@ async function renderLineItemsTab(version) {
         // descriptions are never shaded (confirmed 2026-09-19).
         const bg = isNote ? (li.internalOnly ? '#fbe4e2' : '#eef0f3') : '';
         const row = el('tr', bg ? { style: `background:${bg};` } : {});
+        row.dataset.lineId = li.id;
         actionCells.forEach(c => row.appendChild(c));
         const textInput = el('input', { value: li.noteText || '', style: 'width:100%; border:none; background:transparent;' });
         textInput.onchange = async () => {
@@ -732,6 +751,7 @@ async function renderLineItemsTab(version) {
       const dnExtCell = el('td', { class: 'num' }, `$${dnExtended.toFixed(2)}`);
 
       const row = el('tr', {}, actionCells);
+      row.dataset.lineId = li.id;
       row.append(
         el('td', {}, String(li.lineNumber)),
         el('td', {}, qtyInput),
@@ -742,6 +762,17 @@ async function renderLineItemsTab(version) {
         dnExtCell,
       );
       table.appendChild(row);
+    });
+    // Excel's "insert row above" hotkey, scoped to this grid: works while
+    // focused in any field of a row, inserting a blank line above that row
+    // (2026-09-19).
+    table.addEventListener('keydown', (e) => {
+      const isPlus = e.key === '+' || e.key === '=';
+      if (!isPlus || !e.shiftKey || !(e.ctrlKey || e.metaKey)) return;
+      const row = e.target.closest('tr[data-line-id]');
+      if (!row) return;
+      e.preventDefault();
+      insertLineAbove(row.dataset.lineId);
     });
     panel.appendChild(table);
   }

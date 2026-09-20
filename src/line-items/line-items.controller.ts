@@ -19,6 +19,11 @@ export class LineItemsController {
     return this.lineItemsService.findAllForVersion(versionId);
   }
 
+  @Post('line-items/:id/insert-before')
+  insertBefore(@Param('id') id: string, @Body() dto: CreateLineItemDto) {
+    return this.lineItemsService.insertBefore(id, dto);
+  }
+
   @Get('versions/:versionId/commission-structure')
   getCommissionStructure(@Param('versionId') versionId: string) {
     return this.lineItemsService.getCommissionStructure(versionId);

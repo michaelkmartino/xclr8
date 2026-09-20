@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, asc, eq, inArray, max } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, max, sql } from 'drizzle-orm';
 import { DB } from '../db/db.module.js';
 import * as schema from '../db/schema.js';
 import { CreateLineItemDto } from './dto/create-line-item.dto.js';
@@ -57,11 +57,47 @@ export class LineItemsService {
       .where(eq(schema.quoteVersions.id, quoteVersionId));
     if (!version) throw new NotFoundException(`Quote version ${quoteVersionId} not found`);
 
-    const { editedBy, lineType = 'item', ...rest } = dto;
     const lineNumber = await this.nextLineNumber(quoteVersionId);
+    return this.insertRow(this.db, quoteVersionId, dto, lineNumber);
+  }
+
+  /**
+   * Inserts a new row immediately above an existing line item — the "+"
+   * (insert) button between a row's trash and copy buttons, and the
+   * Ctrl+Shift+= hotkey (Excel's "insert row above" shortcut), both call
+   * this (2026-09-19). Every row at or below the target's line number
+   * shifts down by one to make room; lineNumber has no unique constraint,
+   * so this is a single bulk UPDATE rather than a per-row loop.
+   */
+  async insertBefore(beforeLineItemId: string, dto: CreateLineItemDto) {
+    const [target] = await this.db.select().from(schema.lineItems).where(eq(schema.lineItems.id, beforeLineItemId));
+    if (!target) throw new NotFoundException(`Line item ${beforeLineItemId} not found`);
+
+    return this.db.transaction(async (tx) => {
+      await tx
+        .update(schema.lineItems)
+        .set({ lineNumber: sql`${schema.lineItems.lineNumber} + 1` })
+        .where(
+          and(
+            eq(schema.lineItems.quoteVersionId, target.quoteVersionId),
+            gte(schema.lineItems.lineNumber, target.lineNumber),
+          ),
+        );
+      return this.insertRow(tx, target.quoteVersionId, dto, target.lineNumber);
+    });
+  }
+
+  /** Shared row-creation body for createForVersion and insertBefore, parameterized on the db/tx handle and an explicit lineNumber. */
+  private async insertRow(
+    dbHandle: NodePgDatabase<typeof schema>,
+    quoteVersionId: string,
+    dto: CreateLineItemDto,
+    lineNumber: number,
+  ) {
+    const { editedBy, lineType = 'item', ...rest } = dto;
 
     if (lineType === 'blank' || lineType === 'subtotal') {
-      const [lineItem] = await this.db
+      const [lineItem] = await dbHandle
         .insert(schema.lineItems)
         .values({ quoteVersionId, lineNumber, lineType, quantity: '0', dnBase: '0' })
         .returning();
@@ -70,7 +106,7 @@ export class LineItemsService {
     }
 
     if (lineType === 'note' || lineType === 'description') {
-      const [lineItem] = await this.db
+      const [lineItem] = await dbHandle
         .insert(schema.lineItems)
         .values({
           quoteVersionId,
@@ -91,7 +127,7 @@ export class LineItemsService {
     if (!rest.manufacturerId) throw new BadRequestException('manufacturerId is required');
     const { commissionPct, overageSplitPct } = await this.resolveCommission(quoteVersionId, rest.manufacturerId);
 
-    const [lineItem] = await this.db
+    const [lineItem] = await dbHandle
       .insert(schema.lineItems)
       .values({
         quoteVersionId,
