@@ -136,6 +136,12 @@
   .quote-sheet .total { text-align: right; font-size: 15px; font-weight: 700; margin-top: 10px; }
   .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13.5px; margin-bottom: 12px; }
   .kv b { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+
+  .panel.subtle { background: #fbfcfe; box-shadow: none; }
+  .dialog { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 10px; max-width: 360px; }
+  .dialog-title { font-size: 13px; font-weight: 650; color: var(--text); }
+  .dialog label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; font-weight: 500; }
+  .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>
 </head>
 <body>
@@ -250,8 +256,49 @@ async function render() {
 }
 
 // ================= JOBS =================
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 async function renderJobs() {
   app.appendChild(crumbs([{ label: 'Jobs' }]));
+
+  const recent = await api('/quote-versions/recent');
+  if (recent.length) {
+    const recentPanel = el('div', { class: 'panel' });
+    recentPanel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, 'Recent Quotes')));
+    const rtable = el('table');
+    rtable.appendChild(el('tr', {}, [
+      el('th', {}, 'Job'), el('th', {}, 'Bid Package'), el('th', {}, 'Version'),
+      el('th', {}, 'Status'), el('th', {}, 'Last Modified'), el('th', {}, 'Last Edited By'),
+    ]));
+    recent.forEach(r => {
+      const row = el('tr', { class: 'clickable' }, [
+        el('td', {}, r.jobName),
+        el('td', {}, r.bidPackage),
+        el('td', {}, `v${r.versionNumber}${r.label ? ' — ' + r.label : ''}`),
+        el('td', {}, [
+          r.isReporting ? el('span', { class: 'badge reporting' }, 'Reporting') : el('span', { class: 'badge draft' }, 'Draft'),
+          ' ',
+          r.lockHolderName ? el('span', { class: 'badge locked' }, `🔒 ${r.lockHolderName}`) : null,
+        ]),
+        el('td', {}, timeAgo(r.updatedAt)),
+        el('td', {}, r.lastEditedBy || '—'),
+      ]);
+      row.onclick = () => goto('version', { versionId: r.versionId, quoteId: r.quoteId });
+      rtable.appendChild(row);
+    });
+    recentPanel.appendChild(rtable);
+    app.appendChild(recentPanel);
+  }
+
   const jobs = await api('/jobs');
   const panel = el('div', { class: 'panel' });
   panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, `Jobs (${jobs.length})`)));
@@ -286,24 +333,44 @@ async function renderJob() {
     { label: 'Jobs', onClick: () => goto('jobs') },
     { label: job.name },
   ]));
-  const panel = el('div', { class: 'panel' });
-  panel.appendChild(el('div', { class: 'panel-header' }, [
-    el('h2', {}, `Quotes — ${job.name}`),
-  ]));
+
   const quotes = await api(`/jobs/${job.id}/quotes`);
-  if (!quotes.length) panel.appendChild(el('div', { class: 'empty' }, 'No quotes yet — add a bid package below.'));
-  else {
+  const quotesWithVersions = await Promise.all(quotes.map(q => api(`/quotes/${q.id}`)));
+
+  quotesWithVersions.forEach(quote => {
+    const panel = el('div', { class: 'panel' });
+    // Only show the bid package name as a heading once there's more than
+    // one (an addendum, say) — the common single-bid-package job just
+    // shows its versions directly, no extra label to read past.
+    const heading = quotesWithVersions.length > 1 ? `${job.name} — ${quote.bidPackage}` : job.name;
+    panel.appendChild(el('div', { class: 'panel-header' }, el('h2', {}, heading)));
     const table = el('table');
-    table.appendChild(el('tr', {}, [el('th', {}, 'Bid Package'), el('th', {}, 'Created')]));
-    quotes.forEach(q => table.appendChild(el('tr', { class: 'clickable', onclick: () => goto('quote', { quoteId: q.id }) }, [
-      el('td', {}, q.bidPackage), el('td', {}, new Date(q.createdAt).toLocaleString()),
-    ])));
+    table.appendChild(el('tr', {}, [el('th', {}, 'Version'), el('th', {}, 'Label'), el('th', {}, 'Status'), el('th', {}, 'Lock'), el('th', {}, 'Created')]));
+    quote.versions.forEach(v => {
+      const locked = !!v.lockHolderName;
+      const row = el('tr', { class: 'clickable' }, [
+        el('td', {}, `v${v.versionNumber}`),
+        el('td', {}, v.label || '—'),
+        el('td', {}, v.isReporting ? el('span', { class: 'badge reporting' }, 'Reporting') : el('span', { class: 'badge draft' }, 'Draft')),
+        el('td', {}, locked ? el('span', { class: 'badge locked' }, `🔒 ${v.lockHolderName}`) : el('span', { class: 'badge unlocked' }, 'Open')),
+        el('td', {}, new Date(v.createdAt).toLocaleString()),
+      ]);
+      row.onclick = () => goto('version', { versionId: v.id, quoteId: quote.id });
+      table.appendChild(row);
+    });
     panel.appendChild(table);
-  }
+    panel.appendChild(newVersionControl(quote.id));
+    app.appendChild(panel);
+  });
+
+  // Tucked-away secondary action — most jobs only ever need the one
+  // ("Base Bid") bid package that's created automatically with the job.
+  const addBidPackage = el('details', { class: 'panel subtle' });
+  addBidPackage.appendChild(el('summary', {}, 'Add another bid package (e.g. an addendum)'));
   const form = el('form', { class: 'inline' });
   form.append(
-    el('label', {}, ['Bid package', el('input', { name: 'bidPackage', placeholder: 'Base Bid' })]),
-    el('button', {}, 'Add quote'),
+    el('label', {}, ['Bid package', el('input', { name: 'bidPackage', placeholder: 'Addendum 1' })]),
+    el('button', {}, 'Add bid package'),
   );
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -312,8 +379,8 @@ async function renderJob() {
     await api(`/jobs/${job.id}/quotes`, { method: 'POST', body });
     render();
   };
-  panel.appendChild(form);
-  app.appendChild(panel);
+  addBidPackage.appendChild(form);
+  app.appendChild(addBidPackage);
 }
 
 // ================= QUOTES / VERSIONS =================
@@ -342,20 +409,58 @@ async function renderQuote() {
     table.appendChild(row);
   });
   panel.appendChild(table);
-  const form = el('form', { class: 'inline' });
-  form.append(
-    el('label', {}, ['New version label', el('input', { name: 'label', placeholder: 'Revised drawings 9/19' })]),
-    el('button', {}, 'Create new version (copies latest)'),
-  );
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(form).entries());
-    if (!body.label) delete body.label;
-    await api(`/quotes/${quote.id}/versions`, { method: 'POST', body });
-    render();
-  };
-  panel.appendChild(form);
+  panel.appendChild(newVersionControl(quote.id));
   app.appendChild(panel);
+}
+
+/**
+ * "Create new version" always asks first whether to copy the current
+ * version's line items/pricing or start completely blank (confirmed
+ * 2026-09-19) — no more silent copy-by-default. Implemented as a small
+ * inline dialog rather than a native modal, since everything else in this
+ * app is inline panels.
+ */
+function newVersionControl(quoteId) {
+  const wrap = el('div', { class: 'panel subtle' });
+  const openBtn = el('button', {}, '+ New version');
+  wrap.appendChild(openBtn);
+
+  const dialog = el('div', { class: 'dialog', style: 'display:none;' });
+  const labelInput = el('input', { name: 'label', placeholder: 'Revised drawings 9/19' });
+  dialog.append(
+    el('div', { class: 'dialog-title' }, 'Start the new version from…'),
+    el('label', {}, ['Label (optional)', labelInput]),
+    el('div', { class: 'dialog-actions' }, [
+      (() => {
+        const b = el('button', {}, 'Copy current version');
+        b.onclick = () => submit(false);
+        return b;
+      })(),
+      (() => {
+        const b = el('button', { class: 'secondary' }, 'Start blank version');
+        b.onclick = () => submit(true);
+        return b;
+      })(),
+      (() => {
+        const b = el('button', { class: 'secondary' }, 'Cancel');
+        b.type = 'button';
+        b.onclick = () => { dialog.style.display = 'none'; openBtn.style.display = ''; };
+        return b;
+      })(),
+    ]),
+  );
+  wrap.appendChild(dialog);
+
+  openBtn.onclick = () => { openBtn.style.display = 'none'; dialog.style.display = ''; };
+
+  async function submit(blank) {
+    const body = { blank };
+    if (labelInput.value) body.label = labelInput.value;
+    await api(`/quotes/${quoteId}/versions`, { method: 'POST', body });
+    render();
+  }
+
+  return wrap;
 }
 
 async function renderVersion() {
@@ -460,6 +565,7 @@ async function renderLineItemsTab(version) {
       body.lineNumber = Number(body.lineNumber);
       if (!body.commissionPct) delete body.commissionPct;
       if (!body.overageSplitPct) delete body.overageSplitPct;
+      body.editedBy = getUserName();
       await api(`/versions/${version.id}/line-items`, { method: 'POST', body });
       render();
     };
@@ -509,6 +615,7 @@ async function renderPrintSelectionsTab(version) {
       e.preventDefault();
       const body = Object.fromEntries(new FormData(form).entries());
       body.selectedColumnOrder = Number(body.selectedColumnOrder);
+      body.editedBy = getUserName();
       await api(`/versions/${version.id}/print-selections`, { method: 'POST', body });
       render();
     };
@@ -578,6 +685,7 @@ async function renderLineItem() {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(form).entries());
     body.columnOrder = Number(body.columnOrder);
+    body.editedBy = getUserName();
     await api(`/line-items/${li.id}/price-columns`, { method: 'POST', body });
     render();
   };

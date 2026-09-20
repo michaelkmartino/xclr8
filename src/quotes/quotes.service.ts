@@ -37,6 +37,33 @@ export class QuotesService {
     });
   }
 
+  /**
+   * Powers the "recent quotes" list on the Jobs landing page — every
+   * version across every job, newest activity first, so anyone opening the
+   * app sees what's actively being worked on and by whom (2026-09-19).
+   */
+  async findRecentVersions(limit = 15) {
+    return this.db
+      .select({
+        versionId: schema.quoteVersions.id,
+        quoteId: schema.quoteVersions.quoteId,
+        versionNumber: schema.quoteVersions.versionNumber,
+        label: schema.quoteVersions.label,
+        isReporting: schema.quoteVersions.isReporting,
+        lockHolderName: schema.quoteVersions.lockHolderName,
+        updatedAt: schema.quoteVersions.updatedAt,
+        lastEditedBy: schema.quoteVersions.lastEditedBy,
+        bidPackage: schema.quotes.bidPackage,
+        jobId: schema.jobs.id,
+        jobName: schema.jobs.name,
+      })
+      .from(schema.quoteVersions)
+      .innerJoin(schema.quotes, eq(schema.quotes.id, schema.quoteVersions.quoteId))
+      .innerJoin(schema.jobs, eq(schema.jobs.id, schema.quotes.jobId))
+      .orderBy(desc(schema.quoteVersions.updatedAt))
+      .limit(limit);
+  }
+
   findAllForJob(jobId: string) {
     return this.db.select().from(schema.quotes).where(eq(schema.quotes.jobId, jobId));
   }
@@ -53,20 +80,21 @@ export class QuotesService {
   }
 
   /**
-   * New version = full snapshot copy of an existing version's line items and
-   * price columns, per the spec: "a version can represent almost any kind of
-   * change" so it always starts from a complete copy, never a blank slate.
-   * Not marked reporting by default — that's a separate, explicit choice
-   * (setReporting), matching the "Use this version for Salesforce reporting?"
-   * prompt described in the roadmap.
+   * New version either copies an existing version's line items and price
+   * columns, or starts completely empty — the user is asked which, every
+   * time, at "create new version" (confirmed 2026-09-19; previously this
+   * always copied). Not marked reporting by default — that's a separate,
+   * explicit choice (setReporting), matching the "Use this version for
+   * Salesforce reporting?" prompt described in the roadmap.
    */
   async createVersion(quoteId: string, dto: CreateVersionDto) {
     const quote = await this.findOne(quoteId);
     if (!quote) throw new NotFoundException(`Quote ${quoteId} not found`);
 
-    const sourceVersionId =
-      dto.copyFromVersionId ?? quote.versions.find((v) => v.isReporting)?.id ?? quote.versions[0]?.id;
-    if (!sourceVersionId) {
+    const sourceVersionId = dto.blank
+      ? null
+      : (dto.copyFromVersionId ?? quote.versions.find((v) => v.isReporting)?.id ?? quote.versions[0]?.id);
+    if (!dto.blank && !sourceVersionId) {
       throw new BadRequestException('No existing version to copy from');
     }
 
@@ -85,6 +113,10 @@ export class QuotesService {
           isReporting: false,
         })
         .returning();
+
+      if (!sourceVersionId) {
+        return newVersion;
+      }
 
       const sourceLineItems = await tx
         .select()
@@ -185,7 +217,7 @@ export class QuotesService {
 
     const [updated] = await this.db
       .update(schema.quoteVersions)
-      .set({ lockHolderName: dto.userName, lockAcquiredAt: new Date() })
+      .set({ lockHolderName: dto.userName, lockAcquiredAt: new Date(), updatedAt: new Date(), lastEditedBy: dto.userName })
       .where(eq(schema.quoteVersions.id, versionId))
       .returning();
     return updated;

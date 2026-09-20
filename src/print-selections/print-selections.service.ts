@@ -34,20 +34,28 @@ export class PrintSelectionsService {
         ),
       );
 
+    let result;
     if (existing) {
       const [updated] = await this.db
         .update(schema.printSelections)
         .set({ selectedColumnOrder: dto.selectedColumnOrder })
         .where(eq(schema.printSelections.id, existing.id))
         .returning();
-      return updated;
+      result = updated;
+    } else {
+      const [created] = await this.db
+        .insert(schema.printSelections)
+        .values({ quoteVersionId, customerId: dto.customerId, selectedColumnOrder: dto.selectedColumnOrder })
+        .returning();
+      result = created;
     }
 
-    const [created] = await this.db
-      .insert(schema.printSelections)
-      .values({ quoteVersionId, customerId: dto.customerId, selectedColumnOrder: dto.selectedColumnOrder })
-      .returning();
-    return created;
+    await this.db
+      .update(schema.quoteVersions)
+      .set({ updatedAt: new Date(), ...(dto.editedBy ? { lastEditedBy: dto.editedBy } : {}) })
+      .where(eq(schema.quoteVersions.id, quoteVersionId));
+
+    return result;
   }
 
   async listForVersion(quoteVersionId: string) {

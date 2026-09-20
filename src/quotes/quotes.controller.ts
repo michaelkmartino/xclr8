@@ -8,6 +8,11 @@ import { LockDto } from './dto/lock.dto.js';
 export class QuotesController {
   constructor(private readonly quotesService: QuotesService) {}
 
+  @Get('quote-versions/recent')
+  findRecentVersions() {
+    return this.quotesService.findRecentVersions();
+  }
+
   @Post('jobs/:jobId/quotes')
   createForJob(@Param('jobId') jobId: string, @Body() dto: CreateQuoteDto) {
     return this.quotesService.createForJob(jobId, dto);

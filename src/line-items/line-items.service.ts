@@ -25,11 +25,21 @@ export class LineItemsService {
       .where(eq(schema.manufacturers.id, dto.manufacturerId));
     if (!manufacturer) throw new NotFoundException(`Manufacturer ${dto.manufacturerId} not found`);
 
+    const { editedBy, ...lineItemFields } = dto;
     const [lineItem] = await this.db
       .insert(schema.lineItems)
-      .values({ quoteVersionId, ...dto })
+      .values({ quoteVersionId, ...lineItemFields })
       .returning();
+    await this.touchVersion(quoteVersionId, editedBy);
     return lineItem;
+  }
+
+  /** Bumps updatedAt/lastEditedBy on a version so the recent-quotes list reflects this change. */
+  private async touchVersion(quoteVersionId: string, editedBy?: string) {
+    await this.db
+      .update(schema.quoteVersions)
+      .set({ updatedAt: new Date(), ...(editedBy ? { lastEditedBy: editedBy } : {}) })
+      .where(eq(schema.quoteVersions.id, quoteVersionId));
   }
 
   findAllForVersion(quoteVersionId: string) {
@@ -72,10 +82,12 @@ export class LineItemsService {
       throw new BadRequestException(`Line item already has the maximum of ${MAX_PRICE_COLUMNS} price columns`);
     }
 
+    const { editedBy, ...priceColumnFields } = dto;
     const [priceColumn] = await this.db
       .insert(schema.priceColumns)
-      .values({ lineItemId, ...dto })
+      .values({ lineItemId, ...priceColumnFields })
       .returning();
+    await this.touchVersion(lineItem.quoteVersionId, editedBy);
     return priceColumn;
   }
 }

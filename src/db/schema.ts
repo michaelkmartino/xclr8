@@ -102,6 +102,12 @@ export const quoteVersions = pgTable('quote_versions', {
   lockAcquiredAt: timestamp('lock_acquired_at'),
   createdById: uuid('created_by_id').references(() => users.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // Bumped on any change within this version (line items, price columns,
+  // print selections, locking) so the "recent quotes" list can show what's
+  // actively being worked on and by whom. Plain text for now, same reason
+  // as lockHolderName above.
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  lastEditedBy: text('last_edited_by'),
 });
 
 // ---------------------------------------------------------------------------

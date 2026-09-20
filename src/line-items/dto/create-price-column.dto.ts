@@ -1,4 +1,4 @@
-import { IsInt, IsNumberString, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsNumberString, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreatePriceColumnDto {
   @IsString()
@@ -11,4 +11,8 @@ export class CreatePriceColumnDto {
   @Min(1)
   @Max(10) // up to 10 price columns per line item, confirmed in the spec
   columnOrder!: number;
+
+  @IsOptional()
+  @IsString()
+  editedBy?: string;
 }

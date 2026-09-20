@@ -36,4 +36,8 @@ export class CreateLineItemDto {
   @IsOptional()
   @IsNumberString()
   overageSplitPct?: string;
+
+  @IsOptional()
+  @IsString()
+  editedBy?: string; // whoever is working as, per the UI's "Working as" identity
 }
