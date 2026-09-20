@@ -120,12 +120,16 @@ export class LineItemsService {
       .where(eq(schema.quoteVersions.id, quoteVersionId));
   }
 
-  findAllForVersion(quoteVersionId: string) {
-    return this.db
+  async findAllForVersion(quoteVersionId: string) {
+    const rows = await this.db
       .select()
       .from(schema.lineItems)
       .where(eq(schema.lineItems.quoteVersionId, quoteVersionId))
       .orderBy(asc(schema.lineItems.lineNumber));
+    // Backward-compat: rows created before lineType existed default to
+    // 'item' but may actually be a note (isNote was the only flag then).
+    // Normalize on read rather than requiring a data migration.
+    return rows.map((r) => (r.lineType === 'item' && r.isNote ? { ...r, lineType: 'note' as const } : r));
   }
 
   /**
