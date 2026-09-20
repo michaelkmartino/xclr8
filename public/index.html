@@ -570,10 +570,19 @@ async function renderLineItemsTab(version) {
     await api(`/line-items/${id}?editedBy=${encodeURIComponent(getUserName())}`, { method: 'DELETE' });
     reload();
   };
-  // Inserts a blank line directly above the given row — the per-row "+"
-  // button and the Ctrl+Shift+= hotkey both call this (2026-09-19).
-  const insertLineAbove = async (id) => {
-    await api(`/line-items/${id}/insert-before`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } });
+  // Inserts a new line directly above the given row, of whichever type is
+  // asked for — the per-row "+" menu (any of the 5 types) and the
+  // Ctrl+Shift+= hotkey (defaults to 'item', the common case) both call
+  // this. New rows land with placeholder defaults and are filled out
+  // inline in the grid, same as "+ Add ..." below the table (2026-09-19).
+  const insertLineAbove = async (id, lineType = 'item') => {
+    const body = { lineType, editedBy: getUserName() };
+    if (lineType === 'item') {
+      Object.assign(body, { quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0' });
+    } else if (lineType === 'note' || lineType === 'description') {
+      Object.assign(body, { noteText: '', internalOnly: false });
+    }
+    await api(`/line-items/${id}/insert-before`, { method: 'POST', body });
     reload();
   };
   const copyLine = async (id) => {
@@ -618,7 +627,7 @@ async function renderLineItemsTab(version) {
   } else {
     const colgroup = el('colgroup', {}, [
       el('col', { style: 'width:34px;' }), // trash
-      el('col', { style: 'width:34px;' }), // insert (+)
+      el('col', { style: 'width:40px;' }), // insert (+)
       el('col', { style: 'width:34px;' }), // copy
       ...LINE_ITEM_COLS.map(c => el('col', { style: `width:${widths[c.key] || c.default}px;` })),
     ]);
@@ -663,9 +672,26 @@ async function renderLineItemsTab(version) {
     sorted.forEach(li => {
       const trashBtn = el('button', { class: 'secondary', title: 'Delete this line' }, '🗑');
       trashBtn.onclick = () => deleteLine(li.id);
-      const insertBtn = el('button', { class: 'secondary', title: 'Insert a line above this one (Ctrl+Shift+=)' }, '+');
-      insertBtn.onclick = () => insertLineAbove(li.id);
-      const actionCells = [el('td', {}, trashBtn), el('td', {}, insertBtn)];
+      // "+" is a type picker, not a plain button — inserting above needs to
+      // say what kind of line it is (item/note/description/blank/subtotal),
+      // same 5 options as the "+ Add ..." bar below the table (2026-09-19).
+      const insertSelect = el(
+        'select',
+        { class: 'secondary', title: 'Insert a line above this one (Ctrl+Shift+= inserts an item line)', style: 'width:100%;' },
+        [
+          el('option', { value: '' }, '+'),
+          el('option', { value: 'item' }, 'Item'),
+          el('option', { value: 'note' }, 'Note'),
+          el('option', { value: 'description' }, 'Description'),
+          el('option', { value: 'blank' }, 'Blank'),
+          el('option', { value: 'subtotal' }, 'Subtotal'),
+        ],
+      );
+      insertSelect.onchange = () => {
+        const chosen = insertSelect.value;
+        if (chosen) insertLineAbove(li.id, chosen);
+      };
+      const actionCells = [el('td', {}, trashBtn), el('td', {}, insertSelect)];
 
       if (li.lineType === 'item') {
         const copyBtn = el('button', { class: 'secondary', title: 'Copy this line' }, '⎘');
@@ -794,103 +820,35 @@ async function renderLineItemsTab(version) {
     }
     panel.appendChild(addBar);
 
-    const formHost = el('div');
-    panel.appendChild(formHost);
-
-    addLineBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(lineItemForm(version, mfrs, formHost)); };
-    addNoteBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(noteForm(version, formHost, 'note')); };
-    addDescBtn.onclick = () => { formHost.innerHTML = ''; formHost.appendChild(noteForm(version, formHost, 'description')); };
+    // "+ Add line item" drops a new row straight into the grid, filled out
+    // inline like every other row — no separate form to fill in first
+    // (confirmed 2026-09-19). Defaults to the first manufacturer in the
+    // list; the user can change it right there in the row.
+    addLineBtn.onclick = async () => {
+      await api(`/versions/${version.id}/line-items`, {
+        method: 'POST',
+        body: { lineType: 'item', quantity: '1', fixtureType: '', manufacturerId: mfrs[0].id, dnBase: '0', editedBy: getUserName() },
+      });
+      reload();
+    };
+    addNoteBtn.onclick = async () => {
+      await api(`/versions/${version.id}/line-items`, {
+        method: 'POST',
+        body: { lineType: 'note', noteText: '', internalOnly: false, editedBy: getUserName() },
+      });
+      reload();
+    };
+    addDescBtn.onclick = async () => {
+      await api(`/versions/${version.id}/line-items`, {
+        method: 'POST',
+        body: { lineType: 'description', noteText: '', internalOnly: false, editedBy: getUserName() },
+      });
+      reload();
+    };
     addBlankBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'blank', editedBy: getUserName() } }); reload(); };
     addSubtotalBtn.onclick = async () => { await api(`/versions/${version.id}/line-items`, { method: 'POST', body: { lineType: 'subtotal', editedBy: getUserName() } }); reload(); };
   }
   app.appendChild(panel);
-}
-
-/**
- * Fixture-line entry form — fields stack in their own row, with "Add line
- * item" on its own line below and left-aligned, rather than trailing the
- * last field (confirmed 2026-09-19). No Line # (server-assigned) and no
- * Commission/Overage % (auto-populated from the Manufacturer).
- */
-function lineItemForm(version, mfrs, formHost) {
-  const wrap = el('div', { class: 'dialog' });
-  const mfrSelect = el('select', { name: 'manufacturerId' }, mfrs.map(m => el('option', { value: m.id }, m.name)));
-  const qtyInput = el('input', { value: '1' });
-  const fixtureInput = el('input', { required: 'true' });
-  const partInput = el('input', {});
-  const dnInput = el('input', { placeholder: '100.00', required: 'true' });
-  wrap.append(
-    el('div', { style: 'display:flex; flex-wrap:wrap; gap:10px;' }, [
-      el('label', {}, ['Qty', qtyInput]),
-      el('label', {}, ['Fixture type', fixtureInput]),
-      el('label', {}, ['Manufacturer', mfrSelect]),
-      el('label', {}, ['Part #', partInput]),
-      el('label', {}, ['DN Base ($)', dnInput]),
-    ]),
-  );
-  const actions = el('div', { class: 'dialog-actions' });
-  const addBtn = el('button', {}, 'Add line item');
-  const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
-  cancelBtn.type = 'button';
-  cancelBtn.onclick = () => { formHost.innerHTML = ''; };
-  actions.append(addBtn, cancelBtn);
-  wrap.appendChild(actions);
-
-  addBtn.onclick = async () => {
-    if (!fixtureInput.value || !dnInput.value) { fixtureInput.reportValidity?.(); dnInput.reportValidity?.(); return; }
-    await api(`/versions/${version.id}/line-items`, {
-      method: 'POST',
-      body: {
-        lineType: 'item',
-        quantity: qtyInput.value || '1',
-        fixtureType: fixtureInput.value,
-        manufacturerId: mfrSelect.value,
-        partNumber: partInput.value || undefined,
-        dnBase: dnInput.value,
-        editedBy: getUserName(),
-      },
-    });
-    render();
-  };
-  return wrap;
-}
-
-/**
- * Free-text Note/Description row entry — a blank line for internal or
- * printable commentary (Note) or an always-printing spec line (Description).
- * "Internal only" (Notes only) keeps it off printed/sent quotes and, while
- * checked here, tints this entry form as a preview of the light-red
- * internal shading (confirmed 2026-09-19).
- */
-function noteForm(version, formHost, lineType) {
-  const wrap = el('div', { class: 'dialog' });
-  const textInput = el('input', { placeholder: lineType === 'note' ? 'Note text' : 'Description text', style: 'min-width:320px;' });
-  const fields = [el('label', {}, [lineType === 'note' ? 'Note' : 'Description', textInput])];
-  let internalCheckbox = null;
-  if (lineType === 'note') {
-    internalCheckbox = el('input', { type: 'checkbox' });
-    const checkboxLabel = el('label', { style: 'flex-direction:row; align-items:center; gap:6px;' }, [internalCheckbox, 'Internal only (won’t print)']);
-    internalCheckbox.onchange = () => { wrap.style.background = internalCheckbox.checked ? '#fbe4e2' : ''; };
-    fields.push(checkboxLabel);
-  }
-  wrap.append(el('div', { style: 'display:flex; flex-wrap:wrap; gap:14px; align-items:end;' }, fields));
-  const actions = el('div', { class: 'dialog-actions' });
-  const addBtn = el('button', {}, lineType === 'note' ? 'Add note' : 'Add description');
-  const cancelBtn = el('button', { class: 'secondary' }, 'Cancel');
-  cancelBtn.type = 'button';
-  cancelBtn.onclick = () => { formHost.innerHTML = ''; };
-  actions.append(addBtn, cancelBtn);
-  wrap.appendChild(actions);
-
-  addBtn.onclick = async () => {
-    if (!textInput.value) return;
-    await api(`/versions/${version.id}/line-items`, {
-      method: 'POST',
-      body: { lineType, noteText: textInput.value, internalOnly: internalCheckbox ? internalCheckbox.checked : false, editedBy: getUserName() },
-    });
-    render();
-  };
-  return wrap;
 }
 
 /**
