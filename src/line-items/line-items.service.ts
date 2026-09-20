@@ -206,15 +206,19 @@ export class LineItemsService {
    * and re-create elsewhere via createForVersion (confirmed 2026-09-19).
    */
   async getWithChildren(id: string) {
-    const [lineItem] = await this.db.select().from(schema.lineItems).where(eq(schema.lineItems.id, id));
-    if (!lineItem) throw new NotFoundException(`Line item ${id} not found`);
+    const [row] = await this.db.select().from(schema.lineItems).where(eq(schema.lineItems.id, id));
+    if (!row) throw new NotFoundException(`Line item ${id} not found`);
+    // Same legacy-row normalization as findAllForVersion (2026-09-19).
+    const lineItem = row.lineType === 'item' && row.isNote ? { ...row, lineType: 'note' as const } : row;
     const children = await this.getPositionalChildren(id);
     return { lineItem, children };
   }
 
   async findOneWithPricing(id: string) {
-    const [lineItem] = await this.db.select().from(schema.lineItems).where(eq(schema.lineItems.id, id));
-    if (!lineItem) return null;
+    const [row] = await this.db.select().from(schema.lineItems).where(eq(schema.lineItems.id, id));
+    if (!row) return null;
+    // Same legacy-row normalization as findAllForVersion (2026-09-19).
+    const lineItem = row.lineType === 'item' && row.isNote ? { ...row, lineType: 'note' as const } : row;
     const priceColumns = await this.db
       .select()
       .from(schema.priceColumns)
